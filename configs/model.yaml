@@ -1,0 +1,15 @@
+embeddings:
+  atom_dim: 128
+  bond_dim: 64
+  position_dim: 3
+
+gnn:
+  num_layers: 6
+  hidden_dim: 256
+  message_dim: 256
+  activation: "gelu"
+  dropout: 0.0
+
+denoiser:
+  residual: true
+  layer_norm: true
