@@ -5,7 +5,7 @@ the indices to a compressed .npz file (default: data/processed/splits.npz).
 
 Example:
     python scripts/create_splits.py \\
-        --num_samples 133885 \\
+        --num_samples 131970 \\
         --train_ratio 0.8 --val_ratio 0.1 --test_ratio 0.1 \\
         --output data/processed/qm9_splits.npz \\
         --seed 42
