@@ -30,7 +30,7 @@ from typing import Dict, List
 import numpy as np
 from rdkit import Chem
 
-from src.dataset.encoding import encode_molecule
+from mgd.dataset.encoding import encode_molecule
 
 
 def load_qm9_sdf(path: Path) -> List[Chem.Mol]:
