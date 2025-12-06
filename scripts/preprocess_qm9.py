@@ -34,8 +34,8 @@ HYBRIDIZATIONS = [
     Chem.HybridizationType.SP,
     Chem.HybridizationType.SP2,
     Chem.HybridizationType.SP3,
-    Chem.HybridizationType.SP3D,
-    Chem.HybridizationType.SP3D2,
+    # Chem.HybridizationType.SP3D,
+    # Chem.HybridizationType.SP3D2,
 ]
 
 # Pauling electronegativity (approximate)
@@ -68,7 +68,12 @@ def encode_atom(atom: Chem.Atom, dtype: DTypeLike = "float32") -> np.ndarray:
     symbol = atom.GetSymbol()
     atom_oh = one_hot(symbol, ATOM_TYPES, dtype=dtype)
     electroneg = np.array([ELECTRONEGATIVITY.get(symbol, 0.0)], dtype=dtype)
-    hybrid = one_hot(atom.GetHybridization(), HYBRIDIZATIONS, dtype=dtype)
+    hybridization = atom.GetHybridization()
+    if symbol is not "H" and hybridization not in HYBRIDIZATIONS:
+        print(f"Hybridization type {hybridization} detected for atom of type {symbol}; ",
+              f"{hybridization} will be encoded as unspecified.")
+        hybridization = Chem.HybridizationType.UNSPECIFIED
+    hybrid = one_hot(hybridization, HYBRIDIZATIONS, dtype=dtype)
     degree = np.array([atom.GetDegree() / 4.0], dtype=dtype)
     formal_valence = np.array([atom.GetFormalCharge() / 4.0], dtype=dtype)
     aromatic = np.array([1.0 if atom.GetIsAromatic() else 0.0], dtype=dtype)
