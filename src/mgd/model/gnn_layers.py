@@ -24,15 +24,15 @@ class MessagePassingLayer(nn.Module):
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
-    def __call__(self, nodes: jnp.ndarray, edges: jnp.ndarray, *, node_mask: jnp.ndarray, bond_mask: jnp.ndarray):
+    def __call__(self, nodes: jnp.ndarray, edges: jnp.ndarray, *, node_mask: jnp.ndarray, pair_mask: jnp.ndarray):
         """Updates nodes and edges.
 
         nodes: (batch..., n_atoms, node_dim)
         edges: (batch..., n_atoms, n_atoms, edge_dim)
         node_mask: (batch..., n_atoms)
-        bond_mask: (batch..., n_atoms, n_atoms)
+        pair_mask: (batch..., n_atoms, n_atoms)
         """
-        bond_mask = jax.lax.stop_gradient(bond_mask)
+        pair_mask = jax.lax.stop_gradient(pair_mask)
         node_mask = jax.lax.stop_gradient(node_mask)
 
         conc = aggregate_node_edge  # Defaults to aggregation by concatenation
@@ -45,12 +45,12 @@ class MessagePassingLayer(nn.Module):
         edges_n = nn.LayerNorm(param_dtype=self.param_dtype)(edges)
 
         m_ij = mess_update(conc(node_j=nodes_n, edge_ij=edges_n))
-        m_ij = m_ij * bond_mask[..., None]
+        m_ij = m_ij * pair_mask[..., None]
         m_i = jnp.sum(m_ij, axis=-2)
         m_i_n = nn.LayerNorm(param_dtype=self.param_dtype)(m_i)
 
         edges_up = edge_update(conc(node_i=nodes_n, node_j=nodes_n, edge_ij=edges_n))
-        edges_up = edges_up * bond_mask[..., None]
+        edges_up = edges_up * pair_mask[..., None]
         if self.residual_connections:
             edges = edges + edges_up
         else:
@@ -63,3 +63,5 @@ class MessagePassingLayer(nn.Module):
             nodes = nodes_up
 
         return nodes, edges
+
+__all__ = ["MessagePassingLayer"]
