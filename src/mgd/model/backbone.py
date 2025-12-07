@@ -33,6 +33,12 @@ class MPNNBackbone(nn.Module):
         node_mask: jnp.ndarray,
         pair_mask: jnp.ndarray,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        node_dim, edge_dim = nodes.shape[-1], edges.shape[-1]
+        if node_dim != self.node_dim or edge_dim != self.edge_dim:
+            raise ValueError(
+                f"Backbone received node/edge dims {(node_dim, edge_dim)} "
+                f"but was initialized with {(self.node_dim, self.edge_dim)}."
+            )
         time_emb = TimeEmbedding(
             self.time_dim,
             self.node_dim,
