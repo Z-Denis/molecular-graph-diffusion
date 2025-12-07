@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, Optional, Sequence, Tuple, Union
 
+from jax.typing import DTypeLike
 import jax.numpy as jnp
 from flax import linen as nn
 
@@ -22,7 +23,7 @@ class MLP(nn.Module):
     features: FeaturesArg
     n_layers: Optional[int] = None
     activation: Callable = nn.gelu
-    param_dtype: str = "float32"
+    param_dtype: DTypeLike = "float32"
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
