@@ -1,7 +1,7 @@
 """Featurization helpers for molecular graphs (QM9-style).
 
-Exposes utilities to turn an RDKit molecule into dense node/edge features with
-fixed padding. Unknown categorical values are encoded as all-zero vectors.
+Provides utilities to turn an RDKit molecule into dense node/edge features with
+fixed padding. Unknown categorical values are encoded as 0 (pad/unknown).
 """
 
 from __future__ import annotations
@@ -30,7 +30,11 @@ ELECTRONEGATIVITY = {
     "F": 3.98,
 }
 
-BOND_TYPES = {
+# Reserve 0 for padding/unknown; categories start at 1
+ATOM_TO_ID = {sym: i + 1 for i, sym in enumerate(ATOM_TYPES)}
+HYBRID_TO_ID = {hyb: i + 1 for i, hyb in enumerate(HYBRIDIZATIONS)}
+
+BOND_TO_ID = {
     "no_bond": 0,
     Chem.BondType.SINGLE: 1,
     Chem.BondType.DOUBLE: 2,
@@ -38,31 +42,44 @@ BOND_TYPES = {
     Chem.BondType.AROMATIC: 4,
 }
 
+ATOM_VOCAB_SIZE = len(ATOM_TYPES) + 1
+HYBRID_VOCAB_SIZE = len(HYBRIDIZATIONS) + 1
+BOND_VOCAB_SIZE = max(BOND_TO_ID.values()) + 1
+
+
+def _one_hot_from_ids(ids: np.ndarray, depth: int, dtype: DTypeLike, zero_as_unknown: bool = True) -> np.ndarray:
+    out = np.zeros(ids.shape + (depth,), dtype=dtype)
+    flat_idx = ids.reshape(-1)
+    mask = flat_idx > 0 if zero_as_unknown else flat_idx >= 0
+    rows = np.nonzero(mask)[0]
+    cols = flat_idx[mask]
+    out.reshape(-1, depth)[rows, cols] = 1.0
+    return out
+
 
 def featurize_components(
     mol: Chem.Mol, dtype: DTypeLike = "float32"
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return categorical one-hots, continuous scalars, and masks for a single molecule."""
+    """Return categorical ids, continuous scalars, and masks for a single molecule."""
     mol = Chem.AddHs(mol, addCoords=False)
     n_atoms = mol.GetNumAtoms()
     if n_atoms > MAX_NODES:
         raise ValueError(f"Molecule has {n_atoms} atoms, exceeds MAX_NODES={MAX_NODES}")
 
+    atom_ids = np.zeros((MAX_NODES,), dtype=np.int32)
+    hybrid_ids = np.zeros((MAX_NODES,), dtype=np.int32)
     node_cont = np.zeros((MAX_NODES, 4), dtype=dtype)  # electronegativity, degree/4, formal_valence/4, aromaticity
-    atom_one_hot = np.zeros((MAX_NODES, len(ATOM_TYPES)), dtype=dtype)
-    hybrid_one_hot = np.zeros((MAX_NODES, len(HYBRIDIZATIONS)), dtype=dtype)
-    edge_one_hot = np.zeros((MAX_NODES, MAX_NODES, len(BOND_TYPES)), dtype=dtype)
+    edge_types = np.zeros((MAX_NODES, MAX_NODES), dtype=np.int32)
     node_mask = np.zeros((MAX_NODES,), dtype=dtype)
     bond_mask = np.zeros((MAX_NODES, MAX_NODES), dtype=dtype)
 
     for i, atom in enumerate(mol.GetAtoms()):
         symbol = atom.GetSymbol()
-        if symbol in ATOM_TYPES:
-            atom_one_hot[i, ATOM_TYPES.index(symbol)] = 1.0
+        atom_ids[i] = ATOM_TO_ID.get(symbol, 0)
         hyb = atom.GetHybridization()
         if symbol != "H":
-            if hyb in HYBRIDIZATIONS:
-                hybrid_one_hot[i, HYBRIDIZATIONS.index(hyb)] = 1.0
+            if hyb in HYBRID_TO_ID:
+                hybrid_ids[i] = HYBRID_TO_ID[hyb]
             else:
                 print(
                     f"Encountered unsupported hybridization {hyb} for atom {symbol}; "
@@ -78,19 +95,20 @@ def featurize_components(
         for j in range(n_atoms):
             bond = None if i == j else mol.GetBondBetweenAtoms(i, j)
             bond_type = bond.GetBondType() if bond is not None else "no_bond"
-            idx = BOND_TYPES.get(bond_type, 0)
-            edge_one_hot[i, j, idx] = 1.0
+            edge_types[i, j] = BOND_TO_ID.get(bond_type, 0)
             if bond is not None:
                 bond_mask[i, j] = 1.0
 
     pair_mask = node_mask[:, None] * node_mask[None, :]
-    return atom_one_hot, hybrid_one_hot, node_cont, edge_one_hot, node_mask, pair_mask, bond_mask
+    return atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask, bond_mask
 
 
 def build_flat_features(
-    atom_one_hot: np.ndarray, hybrid_one_hot: np.ndarray, node_cont: np.ndarray
+    atom_ids: np.ndarray, hybrid_ids: np.ndarray, node_cont: np.ndarray, dtype: DTypeLike
 ) -> np.ndarray:
     """Concatenate categorical one-hots with continuous scalars."""
+    atom_one_hot = _one_hot_from_ids(atom_ids, ATOM_VOCAB_SIZE, dtype)
+    hybrid_one_hot = _one_hot_from_ids(hybrid_ids, HYBRID_VOCAB_SIZE, dtype)
     return np.concatenate([atom_one_hot, hybrid_one_hot, node_cont], axis=-1)
 
 
@@ -103,13 +121,16 @@ def encode_molecule(
         >>> mol = Chem.MolFromSmiles("CCO")
         >>> features = encode_molecule(mol, feature_style="flat")
     """
-    atom_oh, hybrid_oh, node_cont, edge_oh, node_mask, pair_mask, bond_mask = featurize_components(mol, dtype=dtype)
+    atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask, bond_mask = featurize_components(
+        mol, dtype=dtype
+    )
 
     if feature_style == "flat":
-        nodes = build_flat_features(atom_oh, hybrid_oh, node_cont)
+        nodes = build_flat_features(atom_ids, hybrid_ids, node_cont, dtype=dtype)
+        edge_one_hot = _one_hot_from_ids(edge_types, BOND_VOCAB_SIZE, dtype, zero_as_unknown=False)
         return {
             "nodes": nodes.astype(dtype),
-            "edges": edge_oh.astype(dtype),
+            "edges": edge_one_hot.astype(dtype),
             "node_mask": node_mask.astype(dtype),
             "pair_mask": pair_mask.astype(dtype),
             "bond_mask": bond_mask.astype(dtype),
@@ -119,10 +140,10 @@ def encode_molecule(
         raise ValueError(f"feature_style must be 'flat' or 'separate', got {feature_style}")
 
     return {
-        "atom_one_hot": atom_oh.astype(dtype),
-        "hybrid_one_hot": hybrid_oh.astype(dtype),
+        "atom_ids": atom_ids.astype(np.int32),
+        "hybrid_ids": hybrid_ids.astype(np.int32),
         "node_continuous": node_cont.astype(dtype),
-        "edge_one_hot": edge_oh.astype(dtype),
+        "edge_types": edge_types.astype(np.int32),
         "node_mask": node_mask.astype(dtype),
         "pair_mask": pair_mask.astype(dtype),
         "bond_mask": bond_mask.astype(dtype),
@@ -133,7 +154,13 @@ __all__ = [
     "MAX_NODES",
     "ATOM_TYPES",
     "HYBRIDIZATIONS",
-    "BOND_TYPES",
+    "ELECTRONEGATIVITY",
+    "ATOM_TO_ID",
+    "HYBRID_TO_ID",
+    "BOND_TO_ID",
+    "ATOM_VOCAB_SIZE",
+    "HYBRID_VOCAB_SIZE",
+    "BOND_VOCAB_SIZE",
     "featurize_components",
     "build_flat_features",
     "encode_molecule",
