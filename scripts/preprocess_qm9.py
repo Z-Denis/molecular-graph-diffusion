@@ -1,15 +1,15 @@
 """Preprocess QM9 into dense adjacency tensors with explicit hydrogens.
 
 For each molecule, produce fixed-size arrays (max_nodes=29):
-- Categorical one-hots for atoms and hybridizations (unknown -> zeros).
-- Continuous scalars for electronegativity, degree/4, formal_valence/4, aromaticity.
-- Edge bond-type one-hots (includes no-bond).
+- Categorical atoms/hybridizations (one-hot for flat; integer ids for separate).
+- Continuous scalars: electronegativity, degree/4, formal_valence/4, aromaticity.
+- Edges: bond-type (one-hot for flat; integer ids for separate, 0 = no bond).
 - Masks: node_mask, pair_mask, bond_mask.
 
 Outputs a single .npz file with arrays stacked over molecules. Choose feature
 representation with --feature_style (flat|separate). Flat concatenates node
-one-hots + continuous scalars; separate saves each component. Unknown categories
-are encoded as all-zero vectors.
+one-hots + continuous scalars; separate saves categorical ids + continuous arrays.
+Unknown categories map to id 0.
 
 Example:
     python scripts/preprocess_qm9.py \\
@@ -62,10 +62,10 @@ def main() -> None:
 
     node_list: List[np.ndarray] = []
     edge_list: List[np.ndarray] = []
-    atom_oh_list: List[np.ndarray] = []
-    hybrid_oh_list: List[np.ndarray] = []
+    atom_id_list: List[np.ndarray] = []
+    hybrid_id_list: List[np.ndarray] = []
     node_cont_list: List[np.ndarray] = []
-    edge_oh_list: List[np.ndarray] = []
+    edge_type_list: List[np.ndarray] = []
     node_mask_list: List[np.ndarray] = []
     pair_mask_list: List[np.ndarray] = []
     bond_mask_list: List[np.ndarray] = []
@@ -80,10 +80,10 @@ def main() -> None:
             node_list.append(features["nodes"])
             edge_list.append(features["edges"])
         else:
-            atom_oh_list.append(features["atom_one_hot"])
-            hybrid_oh_list.append(features["hybrid_one_hot"])
+            atom_id_list.append(features["atom_ids"])
+            hybrid_id_list.append(features["hybrid_ids"])
             node_cont_list.append(features["node_continuous"])
-            edge_oh_list.append(features["edge_one_hot"])
+            edge_type_list.append(features["edge_types"])
         node_mask_list.append(features["node_mask"])
         pair_mask_list.append(features["pair_mask"])
         bond_mask_list.append(features["bond_mask"])
@@ -101,10 +101,10 @@ def main() -> None:
     else:
         arrays.update(
             {
-                "atom_one_hot": np.stack(atom_oh_list, axis=0),
-                "hybrid_one_hot": np.stack(hybrid_oh_list, axis=0),
+                "atom_ids": np.stack(atom_id_list, axis=0),
+                "hybrid_ids": np.stack(hybrid_id_list, axis=0),
                 "node_continuous": np.stack(node_cont_list, axis=0),
-                "edge_one_hot": np.stack(edge_oh_list, axis=0),
+                "edge_types": np.stack(edge_type_list, axis=0),
             }
         )
 
