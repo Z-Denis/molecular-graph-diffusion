@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Tuple
 
 from jax.typing import DTypeLike
 import jax.numpy as jnp
@@ -10,55 +10,6 @@ from flax import linen as nn
 
 from ..dataset.encoding import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
 from ..dataset.utils import GraphBatch
-from .embeddings import NodeEmbedder, EdgeEmbedder, TimeEmbedding
-
-
-class GraphEmbedder(nn.Module):
-    atom_dim: int 
-    hybrid_dim: int
-    cont_dim: int
-
-    node_dim: int   # hidden_dim for nodes
-    edge_dim: int   # hidden_dim for edges
-    mess_dim: int   # message hidden dim
-
-    atom_vocab_dim: int = ATOM_VOCAB_SIZE
-    hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
-    bond_vocab_dim: int = BOND_VOCAB_SIZE
-
-    activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
-    param_dtype: DTypeLike = "float32"
-
-    @nn.compact
-    def __call__(self, graph: GraphBatch):
-        node_emb = NodeEmbedder(
-            self.atom_vocab_dim,
-            self.hybrid_vocab_dim,
-            self.atom_dim, 
-            self.hybrid_dim, 
-            self.cont_dim, 
-            self.node_dim,
-            self.activation,
-            param_dtype=self.param_dtype,
-            name="node_embedding",
-        )
-        edge_emb = EdgeEmbedder(
-            self.bond_vocab_dim,
-            self.edge_dim,
-            self.edge_dim,
-            self.activation,
-            param_dtype=self.param_dtype,
-            name="edge_embedding",
-        )
-
-        nodes = node_emb(
-            graph.atom_type,
-            graph.hybrid,
-            graph.cont,
-        )
-        edges = edge_emb(graph.edges)
-
-        return nodes, edges
 
 
 class NodeEmbedder(nn.Module):
@@ -172,7 +123,7 @@ class TimeEmbedding(nn.Module):
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
-    def __call__(self, times):
+    def __call__(self, times: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         emb = sinusoidal_time_embedding(times, self.time_dim)
         h = nn.Dense(features=self.time_dim, param_dtype=self.param_dtype)(emb)
         h = self.activation(h)
@@ -180,5 +131,56 @@ class TimeEmbedding(nn.Module):
         t_edges = nn.Dense(features=self.edge_dim, param_dtype=self.param_dtype)(h)
         
         return t_nodes, t_edges
+
+
+class GraphEmbedder(nn.Module):
+    """Embed raw graph categorical/continuous features into latent node/edge tensors."""
+
+    atom_dim: int
+    hybrid_dim: int
+    cont_dim: int
+
+    node_dim: int   # hidden_dim for nodes
+    edge_dim: int   # hidden_dim for edges
+    mess_dim: int   # message hidden dim
+
+    atom_vocab_dim: int = ATOM_VOCAB_SIZE
+    hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
+    bond_vocab_dim: int = BOND_VOCAB_SIZE
+
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
+    param_dtype: DTypeLike = "float32"
+
+    @nn.compact
+    def __call__(self, graph: GraphBatch) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        node_emb = NodeEmbedder(
+            self.atom_vocab_dim,
+            self.hybrid_vocab_dim,
+            self.atom_dim,
+            self.hybrid_dim,
+            self.cont_dim,
+            self.node_dim,
+            self.activation,
+            param_dtype=self.param_dtype,
+            name="node_embedding",
+        )
+        edge_emb = EdgeEmbedder(
+            self.bond_vocab_dim,
+            self.edge_dim,
+            self.edge_dim,
+            self.activation,
+            param_dtype=self.param_dtype,
+            name="edge_embedding",
+        )
+
+        nodes = node_emb(
+            graph.atom_type,
+            graph.hybrid,
+            graph.cont,
+        )
+        edges = edge_emb(graph.edges)
+
+        return nodes, edges
+
 
 __all__ = ["NodeEmbedder", "EdgeEmbedder", "GraphEmbedder", "sinusoidal_time_embedding", "TimeEmbedding"]
