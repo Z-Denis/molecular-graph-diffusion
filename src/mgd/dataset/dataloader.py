@@ -40,6 +40,7 @@ class GraphBatchLoader:
         key: jax.Array,
         shuffle: bool = True,
         drop_last: bool = False,
+        stop_gradient: bool = True,
     ) -> None:
         required = ["atom_ids", "hybrid_ids", "node_continuous", "edge_types", "node_mask", "pair_mask"]
         missing = [k for k in required if k not in data]
@@ -51,6 +52,7 @@ class GraphBatchLoader:
         self.shuffle = shuffle
         self.drop_last = drop_last
         self._key = key
+        self._stop_gradient = stop_gradient
         
         for name, arr in self.data.items():
             if arr.shape[0] <= int(self.indices.max()):
@@ -82,7 +84,10 @@ class GraphBatchLoader:
                 break
             batch_idx = idx[start:end]
             batch = {name: arr[batch_idx] for name, arr in self.data.items()}
-            yield _to_graph_batch(batch)
+            graph = _to_graph_batch(batch)
+            if self._stop_gradient:
+                graph = graph.stop_gradient()
+            yield graph
 
 
 def _to_graph_batch(batch: Dict[str, jnp.ndarray]) -> GraphBatch:
