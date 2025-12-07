@@ -10,6 +10,7 @@ from flax import linen as nn
 
 from ..dataset.encoding import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
 from ..dataset.utils import GraphBatch
+from .utils import GraphLatent
 
 
 class NodeEmbedder(nn.Module):
@@ -18,18 +19,18 @@ class NodeEmbedder(nn.Module):
     Args:
         atom_vocab: Vocabulary size for atom embeddings (include padding slot).
         hybrid_vocab: Vocabulary size for hybridization embeddings (include padding slot).
-        atom_dim: Output size for atom-type embedding.
-        hybrid_dim: Output size for hybridization embedding.
-        cont_dim: Output size for continuous projection.
+        atom_embed_dim: Output size for atom-type embedding.
+        hybrid_embed_dim: Output size for hybridization embedding.
+        cont_embed_dim: Output size for continuous projection.
         hidden_dim: Final hidden dimension after fusion.
         activation: Nonlinearity applied before the last projection.
     """
 
     atom_vocab: int
     hybrid_vocab: int
-    atom_dim: int
-    hybrid_dim: int
-    cont_dim: int
+    atom_embed_dim: int
+    hybrid_embed_dim: int
+    cont_embed_dim: int
     hidden_dim: int
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
@@ -41,7 +42,7 @@ class NodeEmbedder(nn.Module):
         Example:
             >>> import jax
             >>> import jax.numpy as jnp
-            >>> model = NodeEmbedder(atom_vocab=6, hybrid_vocab=4, atom_dim=8, hybrid_dim=4, cont_dim=8, hidden_dim=32)
+            >>> model = NodeEmbedder(atom_vocab=6, hybrid_vocab=4, atom_embed_dim=8, hybrid_embed_dim=4, cont_embed_dim=8, hidden_dim=32)
             >>> variables = model.init(
             ...     jax.random.PRNGKey(0),
             ...     jnp.zeros((2, 29), dtype=jnp.int32),
@@ -57,9 +58,9 @@ class NodeEmbedder(nn.Module):
             >>> out.shape
             (2, 29, 32)
         """
-        atom_emb = nn.Embed(self.atom_vocab, self.atom_dim, name="atom_embedding", param_dtype=self.param_dtype)(atom_ids)
-        hybrid_emb = nn.Embed(self.hybrid_vocab, self.hybrid_dim, name="hybrid_embedding", param_dtype=self.param_dtype)(hybrid_ids)
-        cont_emb = nn.Dense(self.cont_dim, name="cont_projection", param_dtype=self.param_dtype)(node_continuous)
+        atom_emb = nn.Embed(self.atom_vocab, self.atom_embed_dim, name="atom_embedding", param_dtype=self.param_dtype)(atom_ids)
+        hybrid_emb = nn.Embed(self.hybrid_vocab, self.hybrid_embed_dim, name="hybrid_embedding", param_dtype=self.param_dtype)(hybrid_ids)
+        cont_emb = nn.Dense(self.cont_embed_dim, name="cont_projection", param_dtype=self.param_dtype)(node_continuous)
 
         fused = jnp.concatenate([atom_emb, hybrid_emb, cont_emb], axis=-1)
         h = nn.Dense(self.hidden_dim, name="fuse", param_dtype=self.param_dtype)(fused)
@@ -72,7 +73,7 @@ class EdgeEmbedder(nn.Module):
     """Embed bond categorical features into a shared hidden space."""
 
     edge_vocab: int
-    edge_dim: int
+    edge_embed_dim: int
     hidden_dim: int
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
@@ -80,7 +81,7 @@ class EdgeEmbedder(nn.Module):
     @nn.compact
     def __call__(self, edge_types: jnp.ndarray) -> jnp.ndarray:
         """Returns (batch, n_atoms, n_atoms, hidden_dim)."""
-        emb = nn.Embed(self.edge_vocab, self.edge_dim, name="edge_embedding", param_dtype=self.param_dtype)(edge_types)
+        emb = nn.Embed(self.edge_vocab, self.edge_embed_dim, name="edge_embedding", param_dtype=self.param_dtype)(edge_types)
         h = nn.Dense(self.hidden_dim, name="fuse", param_dtype=self.param_dtype)(emb)
         h = self.activation(h)
         h = nn.Dense(self.hidden_dim, name="output", param_dtype=self.param_dtype)(h)
@@ -136,38 +137,37 @@ class TimeEmbedding(nn.Module):
 class GraphEmbedder(nn.Module):
     """Embed raw graph categorical/continuous features into latent node/edge tensors."""
 
-    atom_dim: int
-    hybrid_dim: int
-    cont_dim: int
+    atom_embed_dim: int
+    hybrid_embed_dim: int
+    cont_embed_dim: int
 
-    node_dim: int   # hidden_dim for nodes
-    edge_dim: int   # hidden_dim for edges
-    mess_dim: int   # message hidden dim
-
+    node_hidden_dim: int   # hidden_dim for nodes
+    edge_embed_dim: int    # embed dim for edges
+    edge_hidden_dim: int   # hidden_dim for edges
     atom_vocab_dim: int = ATOM_VOCAB_SIZE
     hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
-    bond_vocab_dim: int = BOND_VOCAB_SIZE
+    edge_vocab_dim: int = BOND_VOCAB_SIZE
 
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
-    def __call__(self, graph: GraphBatch) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def __call__(self, graph: GraphBatch) -> GraphLatent:
         node_emb = NodeEmbedder(
             self.atom_vocab_dim,
             self.hybrid_vocab_dim,
-            self.atom_dim,
-            self.hybrid_dim,
-            self.cont_dim,
-            self.node_dim,
+            self.atom_embed_dim,
+            self.hybrid_embed_dim,
+            self.cont_embed_dim,
+            self.node_hidden_dim,
             self.activation,
             param_dtype=self.param_dtype,
             name="node_embedding",
         )
         edge_emb = EdgeEmbedder(
-            self.bond_vocab_dim,
-            self.edge_dim,
-            self.edge_dim,
+            self.edge_vocab_dim,
+            self.edge_embed_dim,
+            self.edge_hidden_dim,
             self.activation,
             param_dtype=self.param_dtype,
             name="edge_embedding",
@@ -180,7 +180,7 @@ class GraphEmbedder(nn.Module):
         )
         edges = edge_emb(graph.edges)
 
-        return nodes, edges
+        return GraphLatent(nodes, edges)
 
 
 __all__ = ["NodeEmbedder", "EdgeEmbedder", "GraphEmbedder", "sinusoidal_time_embedding", "TimeEmbedding"]
