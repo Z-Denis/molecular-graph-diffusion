@@ -101,6 +101,12 @@ class GraphLatent:
     edge: jnp.ndarray
     __array_priority__ = 1000
 
+    def masked(self, node_mask, pair_mask):
+        return GraphLatent(
+            self.node * node_mask[..., None],
+            self.edge * pair_mask[..., None, None],
+        )
+
     def __add__(self, other: Any) -> "GraphLatent":
         if isinstance(other, GraphLatent):
             return type(self)(jnp.add(self.node, other.node), jnp.add(self.edge, other.edge))

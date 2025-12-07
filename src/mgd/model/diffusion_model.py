@@ -131,11 +131,8 @@ class GraphDiffusionModel(nn.Module):
         sigma_latent = latent_from_scalar(sigma)
         noise_latent = GraphLatent(noise_nodes, noise_edges)
         x_prev = mean + sigma_latent * noise_latent
+        x_prev = x_prev.masked(node_mask, pair_mask)
 
-        x_prev = GraphLatent(
-            x_prev.node * node_mask[..., None],
-            x_prev.edge * pair_mask[..., None],
-        )
         return x_prev
 
 
