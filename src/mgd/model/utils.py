@@ -141,4 +141,16 @@ class GraphLatent:
         return type(self)(-self.node, -self.edge)
 
 
-__all__ = ["MLP", "aggregate_node_edge", "GraphLatent"]
+def latent_from_scalar(value: jnp.ndarray, node_ndim: int = 2, edge_ndim: int = 3) -> GraphLatent:
+    """Broadcast a scalar/array to node and edge shapes with trailing ones.
+
+    Examples:
+        latent_from_scalar(s)  -> node shape (..., 1, 1), edge shape (..., 1, 1, 1)
+        latent_from_scalar(s, node_ndim=3, edge_ndim=4) -> (..., 1,1,1) and (...,1,1,1,1)
+    """
+    node = jnp.reshape(value, value.shape + (1,) * node_ndim)
+    edge = jnp.reshape(value, value.shape + (1,) * edge_ndim)
+    return GraphLatent(node=node, edge=edge)
+
+
+__all__ = ["MLP", "aggregate_node_edge", "GraphLatent", "latent_from_scalar"]
