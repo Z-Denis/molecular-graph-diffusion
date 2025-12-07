@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Tuple
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
@@ -10,6 +10,7 @@ from jax.typing import DTypeLike
 from flax import linen as nn
 
 from .backbone import MPNNBackbone
+from .utils import GraphLatent
 
 
 class MPNNDenoiser(nn.Module):
@@ -25,23 +26,25 @@ class MPNNDenoiser(nn.Module):
     @nn.compact
     def __call__(
         self,
-        nodes: jnp.ndarray,
-        edges: jnp.ndarray,
+        xt: GraphLatent,
         time: jnp.ndarray,
         *,
         node_mask: jnp.ndarray,
         pair_mask: jnp.ndarray,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> GraphLatent:
         backbone = MPNNBackbone(
-            self.node_dim, self.edge_dim, self.mess_dim, self.time_dim,
+            node_dim=self.node_dim,
+            edge_dim=self.edge_dim,
+            mess_dim=self.mess_dim,
+            time_dim=self.time_dim,
             activation=self.activation,
             param_dtype=self.param_dtype,
             n_layers=self.n_layers,
-            name='backbone',
+            name="backbone",
         )
 
         # Evaluate heads
-        nodes, edges = backbone(nodes, edges, time, 
+        nodes, edges = backbone(xt.node, xt.edge, time,
                                 node_mask=node_mask, pair_mask=pair_mask)
 
         # Latent to noise space
@@ -62,6 +65,6 @@ class MPNNDenoiser(nn.Module):
         eps_nodes = eps_nodes * node_mask[..., None]
         eps_edges = eps_edges * pair_mask[..., None]
 
-        return eps_nodes, eps_edges
+        return GraphLatent(eps_nodes, eps_edges)
 
 __all__ = ["MPNNDenoiser"]
