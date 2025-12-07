@@ -6,11 +6,13 @@ fixed padding. Unknown categorical values are encoded as 0 (pad/unknown).
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union
 
 import numpy as np
 from numpy.typing import DTypeLike
 from rdkit import Chem
+
+from mgd.dataset.utils import GraphBatch
 
 MAX_NODES = 29
 
@@ -59,7 +61,7 @@ def _one_hot_from_ids(ids: np.ndarray, depth: int, dtype: DTypeLike, zero_as_unk
 
 def featurize_components(
     mol: Chem.Mol, dtype: DTypeLike = "float32"
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return categorical ids, continuous scalars, and masks for a single molecule."""
     mol = Chem.AddHs(mol, addCoords=False)
     n_atoms = mol.GetNumAtoms()
@@ -71,7 +73,6 @@ def featurize_components(
     node_cont = np.zeros((MAX_NODES, 4), dtype=dtype)  # electronegativity, degree/4, formal_valence/4, aromaticity
     edge_types = np.zeros((MAX_NODES, MAX_NODES), dtype=np.int32)
     node_mask = np.zeros((MAX_NODES,), dtype=dtype)
-    bond_mask = np.zeros((MAX_NODES, MAX_NODES), dtype=dtype)
 
     for i, atom in enumerate(mol.GetAtoms()):
         symbol = atom.GetSymbol()
@@ -96,11 +97,9 @@ def featurize_components(
             bond = None if i == j else mol.GetBondBetweenAtoms(i, j)
             bond_type = bond.GetBondType() if bond is not None else "no_bond"
             edge_types[i, j] = BOND_TO_ID.get(bond_type, 0)
-            if bond is not None:
-                bond_mask[i, j] = 1.0
 
     pair_mask = node_mask[:, None] * node_mask[None, :]
-    return atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask, bond_mask
+    return atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask
 
 
 def build_flat_features(
@@ -113,17 +112,15 @@ def build_flat_features(
 
 
 def encode_molecule(
-    mol: Chem.Mol, feature_style: str = "flat", dtype: DTypeLike = "float32"
-) -> Dict[str, np.ndarray]:
+    mol: Chem.Mol, feature_style: str = "flat", dtype: DTypeLike = "float32", as_batch: bool = False
+) -> Union[Dict[str, np.ndarray], Tuple[GraphBatch, np.ndarray]]:
     """Encode an RDKit molecule into dense node/edge features.
 
     Example:
         >>> mol = Chem.MolFromSmiles("CCO")
         >>> features = encode_molecule(mol, feature_style="flat")
     """
-    atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask, bond_mask = featurize_components(
-        mol, dtype=dtype
-    )
+    atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask = featurize_components(mol, dtype=dtype)
 
     if feature_style == "flat":
         nodes = build_flat_features(atom_ids, hybrid_ids, node_cont, dtype=dtype)
@@ -133,21 +130,30 @@ def encode_molecule(
             "edges": edge_one_hot.astype(dtype),
             "node_mask": node_mask.astype(dtype),
             "pair_mask": pair_mask.astype(dtype),
-            "bond_mask": bond_mask.astype(dtype),
         }
 
     if feature_style != "separate":
         raise ValueError(f"feature_style must be 'flat' or 'separate', got {feature_style}")
 
-    return {
+    feats = {
         "atom_ids": atom_ids.astype(np.int32),
         "hybrid_ids": hybrid_ids.astype(np.int32),
         "node_continuous": node_cont.astype(dtype),
         "edge_types": edge_types.astype(np.int32),
         "node_mask": node_mask.astype(dtype),
         "pair_mask": pair_mask.astype(dtype),
-        "bond_mask": bond_mask.astype(dtype),
     }
+    if as_batch:
+        batch = GraphBatch(
+            atom_type=feats["atom_ids"],
+            hybrid=feats["hybrid_ids"],
+            cont=feats["node_continuous"],
+            edges=feats["edge_types"],
+            node_mask=feats["node_mask"],
+            pair_mask=feats["pair_mask"],
+        )
+        return batch
+    return feats
 
 
 __all__ = [

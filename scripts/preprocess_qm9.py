@@ -4,7 +4,7 @@ For each molecule, produce fixed-size arrays (max_nodes=29):
 - Categorical atoms/hybridizations (one-hot for flat; integer ids for separate).
 - Continuous scalars: electronegativity, degree/4, formal_valence/4, aromaticity.
 - Edges: bond-type (one-hot for flat; integer ids for separate, 0 = no bond).
-- Masks: node_mask, pair_mask, bond_mask.
+- Masks: node_mask, pair_mask (1 when both nodes exist).
 
 Outputs a single .npz file with arrays stacked over molecules. Choose feature
 representation with --feature_style (flat|separate). Flat concatenates node
@@ -68,7 +68,6 @@ def main() -> None:
     edge_type_list: List[np.ndarray] = []
     node_mask_list: List[np.ndarray] = []
     pair_mask_list: List[np.ndarray] = []
-    bond_mask_list: List[np.ndarray] = []
 
     for idx, mol in enumerate(mols):
         try:
@@ -86,14 +85,12 @@ def main() -> None:
             edge_type_list.append(features["edge_types"])
         node_mask_list.append(features["node_mask"])
         pair_mask_list.append(features["pair_mask"])
-        bond_mask_list.append(features["bond_mask"])
         if (idx + 1) % 1000 == 0:
             print(f"Processed {idx + 1}/{len(mols)} molecules...")
 
     arrays: Dict[str, np.ndarray] = {
         "node_mask": np.stack(node_mask_list, axis=0),
         "pair_mask": np.stack(pair_mask_list, axis=0),
-        "bond_mask": np.stack(bond_mask_list, axis=0),
     }
     if args.feature_style == "flat":
         arrays["nodes"] = np.stack(node_list, axis=0)

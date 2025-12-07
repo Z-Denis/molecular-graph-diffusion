@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterator
+from typing import Dict, Iterator, Optional, Sequence
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from mgd.dataset.utils import GraphBatch
 
-class QM9Loader:
+
+class GraphBatchLoader:
     """Iterates over preprocessed QM9 arrays with JAX-friendly batches.
 
     Args:
@@ -24,9 +26,9 @@ class QM9Loader:
         >>> import jax, numpy as np
         >>> splits = dict(np.load("data/processed/qm9_splits.npz"))
         >>> data = dict(np.load("data/processed/qm9_dense.npz"))
-        >>> loader = QM9Loader(data, indices=splits["train"], batch_size=64, key=jax.random.PRNGKey(0))
+        >>> loader = GraphBatchLoader(data, indices=splits["train"], batch_size=64, key=jax.random.PRNGKey(0))
         >>> batch = next(iter(loader))
-        >>> batch['node_mask'].shape
+        >>> batch.node_mask.shape
         (64, 29)
     """
 
@@ -39,6 +41,10 @@ class QM9Loader:
         shuffle: bool = True,
         drop_last: bool = False,
     ) -> None:
+        required = ["atom_ids", "hybrid_ids", "node_continuous", "edge_types", "node_mask", "pair_mask"]
+        missing = [k for k in required if k not in data]
+        if missing:
+            raise KeyError(f"Missing required keys in data: {missing}. Provided keys: {list(data.keys())}")
         self.data = {k: jnp.asarray(v) for k, v in data.items()}
         self.indices = jnp.asarray(indices)
         self.batch_size = int(batch_size)
@@ -51,6 +57,7 @@ class QM9Loader:
                 raise ValueError(
                     f"Array '{name}' has leading dim {arr.shape[0]} but indices include up to {int(self.indices.max())}"
                 )
+        
 
     def __len__(self) -> int:
         """Number of batches per epoch (ceil unless drop_last)."""
@@ -66,7 +73,7 @@ class QM9Loader:
         order = jax.random.permutation(sub, self.indices.shape[0])
         return self.indices[order]
 
-    def __iter__(self) -> Iterator[Dict[str, jnp.ndarray]]:
+    def __iter__(self) -> Iterator[GraphBatch]:
         idx = self._ordered_indices()
         n = idx.shape[0]
         for start in range(0, n, self.batch_size):
@@ -74,7 +81,20 @@ class QM9Loader:
             if end > n and self.drop_last:
                 break
             batch_idx = idx[start:end]
-            yield {name: arr[batch_idx] for name, arr in self.data.items()}
+            batch = {name: arr[batch_idx] for name, arr in self.data.items()}
+            yield _to_graph_batch(batch)
 
 
-__all__ = ["QM9Loader"]
+def _to_graph_batch(batch: Dict[str, jnp.ndarray]) -> GraphBatch:
+    graph = GraphBatch(
+        atom_type=batch["atom_ids"],
+        hybrid=batch["hybrid_ids"],
+        cont=batch["node_continuous"],
+        edges=batch["edge_types"],
+        node_mask=batch["node_mask"],
+        pair_mask=batch["pair_mask"],
+    )
+    return graph
+
+
+__all__ = ["GraphBatchLoader"]
