@@ -40,15 +40,22 @@ class MLP(nn.Module):
         return x
 
 
-def concat_node_edge(
-    node_i: Optional[jnp.ndarray] = None, node_j: Optional[jnp.ndarray] = None, edge_ij: Optional[jnp.ndarray] = None
+def aggregate_node_edge(
+    node_i: Optional[jnp.ndarray] = None,
+    node_j: Optional[jnp.ndarray] = None,
+    edge_ij: Optional[jnp.ndarray] = None,
+    reducer: Optional[Callable[[Sequence[jnp.ndarray]], jnp.ndarray]] = None,
 ) -> jnp.ndarray:
-    """Concatenate available node/edge inputs to (batch, n_atoms, n_atoms, feat).
+    """Aggregate broadcasted node/edge inputs to (batch, n_atoms, n_atoms, feat).
 
     Nodes are broadcast across pair dimensions:
-        node_i -> expand dim=2 then broadcast over j
-        node_j -> expand dim=1 then broadcast over i
+        node_i -> expand dim=-2 then broadcast over j
+        node_j -> expand dim=-3 then broadcast over i
     Edge features are assumed already shaped (batch, n_atoms, n_atoms, d_e).
+
+    reducer: function applied to list of broadcasted parts.
+             Defaults to concatenation along the last axis.
+             Can be a custom callable like `lambda parts: jnp.sum(jnp.stack(parts, axis=-1), axis=-1)`.
     """
     if node_i is None and node_j is None and edge_ij is None:
         raise ValueError("At least one of node_i, node_j, or edge_ij must be provided.")
@@ -79,7 +86,9 @@ def concat_node_edge(
         parts.append(nj)
     if edge_ij is not None:
         parts.append(edge_ij)
-    return jnp.concatenate(parts, axis=-1)
+    if reducer is None:
+        return jnp.concatenate(parts, axis=-1)
+    return reducer(parts)
 
 
-__all__ = ["MLP", "concat_node_edge"]
+__all__ = ["MLP", "aggregate_node_edge"]
