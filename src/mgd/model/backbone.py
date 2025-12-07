@@ -1,4 +1,4 @@
-"""Flax Linen modules for the backbone of a denoiser"""
+"""Flax Linen modules for the backbone of a denoiser."""
 
 from __future__ import annotations
 
