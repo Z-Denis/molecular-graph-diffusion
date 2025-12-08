@@ -34,7 +34,7 @@ class NodeEmbedder(nn.Module):
     cont_embed_dim: int
     hidden_dim: int
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
-    scale: float = 6.0
+    scale: float = 1.0
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
@@ -67,11 +67,15 @@ class NodeEmbedder(nn.Module):
         fused = jnp.concatenate([atom_emb, hybrid_emb, cont_emb], axis=-1)
         h = nn.Dense(self.hidden_dim, name="fuse", param_dtype=self.param_dtype)(fused)
         h = self.activation(h)
-        h = nn.Dense(self.hidden_dim, name="output", 
-                     kernel_init=jax.nn.initializers.he_normal(), 
-                     param_dtype=self.param_dtype
-                     )(h)
-        return self.scale * nn.LayerNorm()(h)
+        h = nn.Dense(
+            self.hidden_dim,
+            name="output",
+            use_bias=False,
+            kernel_init=jax.nn.initializers.he_normal(),
+            param_dtype=self.param_dtype,
+        )(h)
+        h = nn.LayerNorm()(h)
+        return self.scale * h
 
 
 class EdgeEmbedder(nn.Module):
@@ -81,7 +85,7 @@ class EdgeEmbedder(nn.Module):
     edge_embed_dim: int
     hidden_dim: int
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
-    scale: float = 9.0
+    scale: float = 1.0
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
@@ -90,11 +94,15 @@ class EdgeEmbedder(nn.Module):
         emb = nn.Embed(self.edge_vocab, self.edge_embed_dim, name="edge_embedding", param_dtype=self.param_dtype)(edge_types)
         h = nn.Dense(self.hidden_dim, name="fuse", param_dtype=self.param_dtype)(emb)
         h = self.activation(h)
-        h = nn.Dense(self.hidden_dim, name="output", 
-                     kernel_init=jax.nn.initializers.he_normal(), 
-                     param_dtype=self.param_dtype
-                     )(h)
-        return self.scale * nn.LayerNorm()(h)
+        h = nn.Dense(
+            self.hidden_dim,
+            name="output",
+            use_bias=False,
+            kernel_init=jax.nn.initializers.he_normal(),
+            param_dtype=self.param_dtype,
+        )(h)
+        h = nn.LayerNorm()(h)
+        return self.scale * h
 
 
 def sinusoidal_time_embedding(timesteps: jnp.ndarray, dim: int) -> jnp.ndarray:
@@ -137,8 +145,8 @@ class TimeEmbedding(nn.Module):
         emb = sinusoidal_time_embedding(times, self.time_dim)
         h = nn.Dense(features=self.time_dim, param_dtype=self.param_dtype)(emb)
         h = self.activation(h)
-        t_nodes = nn.Dense(features=self.node_dim, param_dtype=self.param_dtype)(h)
-        t_edges = nn.Dense(features=self.edge_dim, param_dtype=self.param_dtype)(h)
+        t_nodes = nn.Dense(features=self.node_dim, param_dtype=self.param_dtype, use_bias=False)(h)
+        t_edges = nn.Dense(features=self.edge_dim, param_dtype=self.param_dtype, use_bias=False)(h)
         
         return t_nodes, t_edges
 
@@ -157,8 +165,8 @@ class GraphEmbedder(nn.Module):
     hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
     edge_vocab_dim: int = BOND_VOCAB_SIZE
 
-    node_scale: float = 6.0
-    edge_scale: float = 9.0
+    node_scale: float = 1.0
+    edge_scale: float = 1.0
 
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
