@@ -109,6 +109,26 @@ class GraphDiffusionModel(nn.Module):
             x_{t-1} = mu_t + sigma_t * z,  where sigma_t = sqrt(beta_t) for t>0 else 0, z ~ N(0, I)
         """
         eps = self.predict_eps(xt, t, node_mask=node_mask, pair_mask=pair_mask)
+        return self.ddpm_step(
+            xt,
+            eps,
+            t,
+            node_mask=node_mask,
+            pair_mask=pair_mask,
+            rng=rng,
+        )
+
+    def ddpm_step(
+        self,
+        xt: GraphLatent,
+        eps_pred: GraphLatent,
+        t: jnp.ndarray,
+        *,
+        node_mask: jnp.ndarray,
+        pair_mask: jnp.ndarray,
+        rng: Optional[jax.Array] = None,
+    ) -> GraphLatent:
+        """Reverse update (DDPM) for a single timestep."""
         beta_t = jnp.take(self.schedule.betas, t)
         alpha_t = jnp.take(self.schedule.alphas, t)
         alpha_bar_t = jnp.take(self.schedule.alpha_bar, t)
@@ -118,7 +138,7 @@ class GraphDiffusionModel(nn.Module):
 
         coef1_latent = latent_from_scalar(coef1)
         coef2_latent = latent_from_scalar(coef2)
-        mean = coef1_latent * (xt - coef2_latent * eps)
+        mean = coef1_latent * (xt - coef2_latent * eps_pred)
 
         if rng is None:
             rng = self.make_rng("noise")
@@ -134,6 +154,45 @@ class GraphDiffusionModel(nn.Module):
         x_prev = x_prev.masked(node_mask, pair_mask)
 
         return x_prev
+
+    def sample(
+        self,
+        rng: jax.Array,
+        num_steps: int,
+        init_latent: Optional[GraphLatent] = None,
+        node_mask: Optional[jnp.ndarray] = None,
+        pair_mask: Optional[jnp.ndarray] = None,
+        deterministic: bool = False,
+    ) -> GraphLatent:
+        """Iterative sampling loop. If deterministic=True, placeholder for DDIM."""
+        if init_latent is None:
+            if node_mask is None or pair_mask is None:
+                raise ValueError("node_mask and pair_mask are required when init_latent is None.")
+            rng, rng_n, rng_e = jax.random.split(rng, 3)
+            node_shape = node_mask.shape + (1,)
+            edge_shape = pair_mask.shape + (1,)
+            nodes = jax.random.normal(rng_n, node_shape, dtype=self.param_dtype)
+            edges = jax.random.normal(rng_e, edge_shape, dtype=self.param_dtype)
+            nodes = nodes * node_mask[..., None]
+            edges = edges * pair_mask[..., None]
+            xt = GraphLatent(nodes, edges)
+        else:
+            xt = init_latent
+            if node_mask is None:
+                node_mask = jnp.ones(xt.node.shape[:-1], dtype=xt.node.dtype)
+            if pair_mask is None:
+                pair_mask = jnp.ones(xt.edge.shape[:-1], dtype=xt.edge.dtype)
+
+        for step in range(num_steps, 0, -1):
+            t = jnp.full(xt.node.shape[:-2], step, dtype=jnp.int32)
+            rng, step_rng = jax.random.split(rng)
+            eps = self.predict_eps(xt, t, node_mask=node_mask, pair_mask=pair_mask)
+            if deterministic:
+                # TODO: implement DDIM update; using DDPM for now.
+                xt = self.ddpm_step(xt, eps, t, node_mask=node_mask, pair_mask=pair_mask, rng=step_rng)
+            else:
+                xt = self.ddpm_step(xt, eps, t, node_mask=node_mask, pair_mask=pair_mask, rng=step_rng)
+        return xt
 
 
 __all__ = ["GraphDiffusionModel"]
