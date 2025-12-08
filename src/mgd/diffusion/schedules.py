@@ -15,6 +15,11 @@ class DiffusionSchedule:
     alphas: jnp.ndarray
     alpha_bar: jnp.ndarray
 
+    def snr(self, t: jnp.ndarray, eps: float = 1e-8) -> jnp.ndarray:
+        """Signal-to-noise ratio at time t: alpha_bar_t / (1 - alpha_bar_t)."""
+        alpha_bar_t = jnp.take(self.alpha_bar, t)
+        return alpha_bar_t / jnp.maximum(eps, 1.0 - alpha_bar_t)
+
 
 def cosine_beta_schedule(
     timesteps: int,
