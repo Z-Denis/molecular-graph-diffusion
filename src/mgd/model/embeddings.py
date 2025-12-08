@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Tuple
 
+import jax
 from jax.typing import DTypeLike
 import jax.numpy as jnp
 from flax import linen as nn
@@ -33,6 +34,7 @@ class NodeEmbedder(nn.Module):
     cont_embed_dim: int
     hidden_dim: int
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
+    scale: float = 6.0
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
@@ -65,8 +67,11 @@ class NodeEmbedder(nn.Module):
         fused = jnp.concatenate([atom_emb, hybrid_emb, cont_emb], axis=-1)
         h = nn.Dense(self.hidden_dim, name="fuse", param_dtype=self.param_dtype)(fused)
         h = self.activation(h)
-        h = nn.Dense(self.hidden_dim, name="output", param_dtype=self.param_dtype)(h)
-        return h
+        h = nn.Dense(self.hidden_dim, name="output", 
+                     kernel_init=jax.nn.initializers.he_normal(), 
+                     param_dtype=self.param_dtype
+                     )(h)
+        return self.scale * nn.LayerNorm()(h)
 
 
 class EdgeEmbedder(nn.Module):
@@ -76,6 +81,7 @@ class EdgeEmbedder(nn.Module):
     edge_embed_dim: int
     hidden_dim: int
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
+    scale: float = 9.0
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
@@ -84,8 +90,11 @@ class EdgeEmbedder(nn.Module):
         emb = nn.Embed(self.edge_vocab, self.edge_embed_dim, name="edge_embedding", param_dtype=self.param_dtype)(edge_types)
         h = nn.Dense(self.hidden_dim, name="fuse", param_dtype=self.param_dtype)(emb)
         h = self.activation(h)
-        h = nn.Dense(self.hidden_dim, name="output", param_dtype=self.param_dtype)(h)
-        return h
+        h = nn.Dense(self.hidden_dim, name="output", 
+                     kernel_init=jax.nn.initializers.he_normal(), 
+                     param_dtype=self.param_dtype
+                     )(h)
+        return self.scale * nn.LayerNorm()(h)
 
 
 def sinusoidal_time_embedding(timesteps: jnp.ndarray, dim: int) -> jnp.ndarray:
@@ -148,6 +157,9 @@ class GraphEmbedder(nn.Module):
     hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
     edge_vocab_dim: int = BOND_VOCAB_SIZE
 
+    node_scale: float = 6.0
+    edge_scale: float = 9.0
+
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
 
@@ -162,6 +174,7 @@ class GraphEmbedder(nn.Module):
             self.node_hidden_dim,
             self.activation,
             param_dtype=self.param_dtype,
+            scale=self.node_scale,
             name="node_embedding",
         )
         edge_emb = EdgeEmbedder(
@@ -170,6 +183,7 @@ class GraphEmbedder(nn.Module):
             self.edge_hidden_dim,
             self.activation,
             param_dtype=self.param_dtype,
+            scale=self.edge_scale,
             name="edge_embedding",
         )
 
