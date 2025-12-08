@@ -32,7 +32,7 @@ def cosine_beta_schedule(
     f = lambda t: jnp.cos(((t / timesteps) + s) / (1.0 + s) * jnp.pi / 2.0) ** 2
     alpha_bar = f(steps) / f(0)
     betas = 1.0 - (alpha_bar[1:] / alpha_bar[:-1])
-    betas = jnp.clip(betas, a_min=clip_min, a_max=clip_max)
+    betas = jnp.clip(betas, clip_min, clip_max)
     alphas = 1.0 - betas
     alpha_bar = jnp.cumprod(alphas)
     return DiffusionSchedule(betas=betas, alphas=alphas, alpha_bar=alpha_bar)
