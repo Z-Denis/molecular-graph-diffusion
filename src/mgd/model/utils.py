@@ -104,7 +104,7 @@ class GraphLatent:
     def masked(self, node_mask, pair_mask):
         return GraphLatent(
             self.node * node_mask[..., None],
-            self.edge * pair_mask[..., None, None],
+            self.edge * pair_mask[..., None],
         )
 
     def __add__(self, other: Any) -> "GraphLatent":
