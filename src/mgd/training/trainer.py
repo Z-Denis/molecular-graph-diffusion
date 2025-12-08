@@ -11,6 +11,8 @@ from mgd.dataset.utils import GraphBatch
 from mgd.training.checkpoints import restore_checkpoint, save_checkpoint
 from mgd.training.train_step import DiffusionTrainState, train_step
 
+from tqdm import tqdm
+
 
 def _mean_metrics(history: List[Dict[str, jnp.ndarray]]) -> Dict[str, jnp.ndarray]:
     if not history:
@@ -32,7 +34,7 @@ def train_loop(
     step_fn = jax.jit(train_step)
     history: List[Dict[str, jnp.ndarray]] = []
 
-    for epoch in range(num_epochs):
+    for epoch in tqdm(range(num_epochs)):
         rng, epoch_rng = jax.random.split(rng)
         epoch_metrics: List[Dict[str, jnp.ndarray]] = []
         for step, batch in enumerate(loader):
