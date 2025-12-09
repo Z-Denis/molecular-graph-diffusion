@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Dict, Tuple
 
 import jax.numpy as jnp
+import optax
+import jax
 
 from mgd.latent import GraphLatent
 
@@ -65,4 +67,37 @@ def masked_cosine_similarity(
     return total, {"node_sim": node_sim, "edge_sim": edge_sim}
 
 
-__all__ = ["masked_mse", "masked_cosine_similarity"]
+def masked_cross_entropy(
+    logits: jnp.ndarray,
+    targets: jnp.ndarray,
+    mask: jnp.ndarray,
+    class_weights: jnp.ndarray | None = None,
+    use_label_smoothing: float | None = None,
+) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    """Masked categorical cross-entropy for arbitrary graph logits.
+
+    Works for node logits (e.g., ``(B, N, C)``) or edge logits
+    (e.g., ``(B, N, N, C)``) so long as ``mask`` matches ``targets``.
+    Loss is averaged over unmasked entries:
+        L = sum m * CE(logits, y) / sum m
+    where CE is softmax cross-entropy and m is the provided mask.
+    """
+    if use_label_smoothing is not None:
+        if not (0.0 <= use_label_smoothing < 1.0):
+            raise ValueError("use_label_smoothing must be in [0, 1).")
+        n_classes = logits.shape[-1]
+        one_hot = jax.nn.one_hot(targets, n_classes)
+        smooth = use_label_smoothing / n_classes
+        target_probs = (1.0 - use_label_smoothing) * one_hot + smooth
+        ce = optax.softmax_cross_entropy(logits, target_probs)
+    else:
+        ce = optax.softmax_cross_entropy_with_integer_labels(logits, targets)
+    if class_weights is not None:
+        weights = jnp.take(class_weights, targets)
+        ce = weights * ce
+    masked = ce * mask
+    loss = masked.sum() / jnp.maximum(mask.sum(), 1.0)
+    return loss, {"loss": loss}
+
+
+__all__ = ["masked_mse", "masked_cosine_similarity", "masked_cross_entropy"]
