@@ -9,7 +9,7 @@ from mgd.latent import GraphLatentSpace
 from mgd.model.denoiser import MPNNDenoiser
 from mgd.model.diffusion_model import GraphDiffusionModel
 from mgd.model.embeddings import GraphEmbedder
-from mgd.sampling import DDPMUpdater, GraphSampler
+from mgd.sampling import DDPMUpdater, LatentSampler
 from mgd.training.train_step import DiffusionTrainState
 
 
@@ -80,7 +80,7 @@ def test_sample_masks_and_shapes_reproducible():
     variables = model.init(rngs, batch, jnp.array([1, 2], dtype=jnp.int32))
 
     updater = DDPMUpdater(model.schedule)
-    sampler = GraphSampler(space=model.embedder.space, state=_make_state(model, variables["params"]), updater=updater)
+    sampler = LatentSampler(space=model.embedder.space, state=_make_state(model, variables["params"]), updater=updater)
     base_rng = jax.random.PRNGKey(42)
     out1 = sampler.sample(
         base_rng,
