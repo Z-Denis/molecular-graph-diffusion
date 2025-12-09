@@ -74,10 +74,10 @@ class GraphSampler:
 
         def body(carry, t):
             if record:
-                rng_c, xt_c, snaps_c = carry
+                xt_c, snaps_c = carry
             else:
-                rng_c, xt_c = carry
-            rng_c, step_rng = jax.random.split(rng_c)
+                xt_c = carry
+            step_rng = jax.random.fold_in(rng, t)
             eps = self.predict_fn(xt_c, t, node_mask, pair_mask)
             xt_next = self.updater.step(xt_c, eps, t, node_mask, pair_mask, rng=step_rng)
             if record:
@@ -95,13 +95,13 @@ class GraphSampler:
                         snaps_c.edge,
                     ),
                 )
-                return (rng_c, xt_next, snaps), None
-            return (rng_c, xt_next), None
+                return (xt_next, snaps), None
+            return xt_next, None
 
         if record:
-            (rng_out, xt_final, snaps_out), _ = jax.lax.scan(body, (rng, xt, snaps_init), times)
+            (xt_final, snaps_out), _ = jax.lax.scan(body, (xt, snaps_init), times)
             return xt_final, snaps_out
-        (rng_out, xt_final), _ = jax.lax.scan(body, (rng, xt), times)
+        xt_final, _ = jax.lax.scan(body, xt, times)
         return xt_final
 
 
