@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .python-version
 .venv/
+*.egg-info/
+src/mgd.egg-info/
 
 # Data and outputs
 data/raw/
