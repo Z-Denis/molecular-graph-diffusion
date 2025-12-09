@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Callable
 
-from jax.typing import DTypeLike
 import jax.numpy as jnp
 from flax import linen as nn
+from jax.typing import DTypeLike
 
-from .utils import MLP
+# Use absolute import to avoid any relative import ambiguity
+from mgd.model.utils import MLP
 
 
 class NodeCategoricalDecoder(nn.Module):
@@ -24,17 +25,19 @@ class NodeCategoricalDecoder(nn.Module):
     def __call__(self, node_latent: jnp.ndarray) -> jnp.ndarray:
         """Return node logits of shape (..., n_atoms, n_categories)."""
         ln = nn.LayerNorm(param_dtype=self.param_dtype)
-        mlp = MLP(self.hidden_dim, self.n_layers,
-                  activation=self.activation,
-                  post_activation=self.activation,
-                  param_dtype=self.param_dtype,
-                  )
+        mlp = MLP(
+            self.hidden_dim,
+            self.n_layers,
+            activation=self.activation,
+            param_dtype=self.param_dtype,
+        )
         head = nn.Dense(self.n_categories,
                           param_dtype=self.param_dtype,
                           )
 
         h = ln(node_latent)
         h = mlp(h)
+        h = self.activation(h)
         logits = head(h)
 
         return logits
@@ -53,15 +56,17 @@ class EdgeCategoricalDecoder(nn.Module):
     def __call__(self, edge_latent: jnp.ndarray) -> jnp.ndarray:
         """Return symmetric edge logits of shape (..., n_atoms, n_atoms, n_categories)."""
         ln = nn.LayerNorm(param_dtype=self.param_dtype)
-        mlp = MLP(self.hidden_dim, self.n_layers,
-                  activation=self.activation,
-                  post_activation=self.activation,
-                  param_dtype=self.param_dtype,
-                  )
+        mlp = MLP(
+            self.hidden_dim,
+            self.n_layers,
+            activation=self.activation,
+            param_dtype=self.param_dtype,
+        )
         head = nn.Dense(self.n_categories, param_dtype=self.param_dtype)
 
         h = ln(edge_latent)
         h = mlp(h)
+        h = self.activation(h)
         logits = head(h)
         logits_sym = 0.5 * (logits + jnp.swapaxes(logits, -3, -2))
 
