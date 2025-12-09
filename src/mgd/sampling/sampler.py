@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +12,31 @@ from mgd.sampling.updater import BaseUpdater
 from mgd.training.train_step import DiffusionTrainState
 
 
-class GraphSampler:
+def _prepare_masks(
+    n_atoms: Union[int, jnp.ndarray],
+    batch_size: int,
+    space_dtype,
+    node_mask: Optional[jnp.ndarray],
+    pair_mask: Optional[jnp.ndarray],
+):
+    if isinstance(n_atoms, int):
+        n_atoms_arr = jnp.full((batch_size,), n_atoms, dtype=jnp.int32)
+    else:
+        n_atoms_arr = jnp.asarray(n_atoms, dtype=jnp.int32)
+        batch_size = int(n_atoms_arr.shape[0])
+
+    max_atoms = int(jnp.max(n_atoms_arr))
+
+    if node_mask is None:
+        arange = jnp.arange(max_atoms, dtype=space_dtype)
+        node_mask = (arange[None, :] < n_atoms_arr[:, None]).astype(space_dtype)
+    if pair_mask is None:
+        pair_mask = node_mask[..., :, None] * node_mask[..., None, :]
+
+    return batch_size, max_atoms, node_mask, pair_mask
+
+
+class LatentSampler:
     """Run the reverse diffusion chain with a provided updater."""
 
     def __init__(self, space: AbstractLatentSpace, state: DiffusionTrainState, updater: BaseUpdater):
@@ -37,7 +61,7 @@ class GraphSampler:
         self,
         rng: jax.Array,
         *,
-        n_atoms: int,
+        n_atoms: Union[int, jnp.ndarray],
         n_steps: int | None = None,
         batch_size: int = 1,
         node_mask: Optional[jnp.ndarray] = None,
@@ -49,11 +73,10 @@ class GraphSampler:
         If snapshot_steps is provided, returns (x0, snapshots) where snapshots
         has shape (n_snaps, ...) ordered by the provided steps (descending t).
         """
-        if node_mask is None:
-            node_mask = jnp.ones((batch_size, n_atoms), dtype=self.space.dtype)
-        if pair_mask is None:
-            pair_mask = node_mask[..., :, None] * node_mask[..., None, :]
-        xt = self.space.random_latent(rng, batch_size, n_atoms, node_mask=node_mask, pair_mask=pair_mask)
+        batch_size, max_atoms, node_mask, pair_mask = _prepare_masks(
+            n_atoms, batch_size, self.space.dtype, node_mask, pair_mask
+        )
+        xt = self.space.random_latent(rng, batch_size, max_atoms, node_mask=node_mask, pair_mask=pair_mask)
 
         if n_steps is None:
             n_steps = len(self.updater.schedule.betas) - 1
@@ -105,4 +128,4 @@ class GraphSampler:
         return xt_final
 
 
-__all__ = ["GraphSampler"]
+__all__ = ["LatentSampler"]
