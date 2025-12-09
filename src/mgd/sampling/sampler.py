@@ -42,8 +42,13 @@ class GraphSampler:
         batch_size: int = 1,
         node_mask: Optional[jnp.ndarray] = None,
         pair_mask: Optional[jnp.ndarray] = None,
-    ) -> GraphLatent:
-        """Iteratively sample x_0 from noise using the provided updater."""
+        snapshot_steps: Optional[jnp.ndarray] = None,
+    ):
+        """Iteratively sample x_0 from noise using the provided updater.
+
+        If snapshot_steps is provided, returns (x0, snapshots) where snapshots
+        has shape (n_snaps, ...) ordered by the provided steps (descending t).
+        """
         if node_mask is None:
             node_mask = jnp.ones((batch_size, n_atoms), dtype=self.space.dtype)
         if pair_mask is None:
@@ -52,13 +57,52 @@ class GraphSampler:
 
         if n_steps is None:
             n_steps = len(self.updater.schedule.betas) - 1
-        for step in range(n_steps, 0, -1):
-            t = jnp.full(xt.node.shape[:-2], step, dtype=jnp.int32)
-            rng, step_rng = jax.random.split(rng)
-            eps = self.predict_fn(xt, t, node_mask, pair_mask)
-            xt = self.updater.step(xt, eps, t, node_mask, pair_mask, rng=step_rng)
+        times = jnp.arange(n_steps, 0, -1, dtype=jnp.int32)
 
-        return xt
+        record = snapshot_steps is not None
+        if record:
+            snapshot_steps = jnp.asarray(snapshot_steps)
+            snapshot_steps = jnp.sort(snapshot_steps)[::-1]  # descending to match loop
+            snaps_init = (
+                GraphLatent(
+                    node=jnp.zeros((snapshot_steps.shape[0],) + xt.node.shape, dtype=xt.node.dtype),
+                    edge=jnp.zeros((snapshot_steps.shape[0],) + xt.edge.shape, dtype=xt.edge.dtype),
+                )
+            )
+        else:
+            snaps_init = None
+
+        def body(carry, t):
+            if record:
+                rng_c, xt_c, snaps_c = carry
+            else:
+                rng_c, xt_c = carry
+            rng_c, step_rng = jax.random.split(rng_c)
+            eps = self.predict_fn(xt_c, t, node_mask, pair_mask)
+            xt_next = self.updater.step(xt_c, eps, t, node_mask, pair_mask, rng=step_rng)
+            if record:
+                # Write snapshot if t is in snapshot_steps
+                match = jnp.where(snapshot_steps == t, size=1, fill_value=-1)[0][0]
+                snaps = GraphLatent(
+                    node=jax.lax.select(
+                        match >= 0,
+                        snaps_c.node.at[match].set(xt_next.node),
+                        snaps_c.node,
+                    ),
+                    edge=jax.lax.select(
+                        match >= 0,
+                        snaps_c.edge.at[match].set(xt_next.edge),
+                        snaps_c.edge,
+                    ),
+                )
+                return (rng_c, xt_next, snaps), None
+            return (rng_c, xt_next), None
+
+        if record:
+            (rng_out, xt_final, snaps_out), _ = jax.lax.scan(body, (rng, xt, snaps_init), times)
+            return xt_final, snaps_out
+        (rng_out, xt_final), _ = jax.lax.scan(body, (rng, xt), times)
+        return xt_final
 
 
 __all__ = ["GraphSampler"]
