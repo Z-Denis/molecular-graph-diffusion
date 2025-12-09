@@ -6,7 +6,7 @@ from typing import Dict, Tuple
 
 import jax.numpy as jnp
 
-from mgd.model.utils import GraphLatent
+from mgd.latent import GraphLatent
 
 
 def masked_mse(

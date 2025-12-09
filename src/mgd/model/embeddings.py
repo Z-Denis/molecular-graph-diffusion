@@ -11,7 +11,7 @@ from flax import linen as nn
 
 from ..dataset.encoding import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
 from ..dataset.utils import GraphBatch
-from .utils import GraphLatent
+from ..latent import GraphLatent
 
 
 class NodeEmbedder(nn.Module):

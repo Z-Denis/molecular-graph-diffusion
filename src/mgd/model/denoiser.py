@@ -9,8 +9,8 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
+from ..latent import GraphLatent
 from .backbone import MPNNBackbone
-from .utils import GraphLatent
 
 
 class MPNNDenoiser(nn.Module):
