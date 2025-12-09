@@ -11,7 +11,7 @@ from flax import linen as nn
 
 from ..dataset.encoding import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
 from ..dataset.utils import GraphBatch
-from .utils import GraphLatent
+from ..latent import GraphLatent, GraphLatentSpace
 
 
 class NodeEmbedder(nn.Module):
@@ -154,13 +154,13 @@ class TimeEmbedding(nn.Module):
 class GraphEmbedder(nn.Module):
     """Embed raw graph categorical/continuous features into latent node/edge tensors."""
 
+    space: GraphLatentSpace
+    
     atom_embed_dim: int
     hybrid_embed_dim: int
     cont_embed_dim: int
-
-    node_hidden_dim: int   # hidden_dim for nodes
     edge_embed_dim: int    # embed dim for edges
-    edge_hidden_dim: int   # hidden_dim for edges
+
     atom_vocab_dim: int = ATOM_VOCAB_SIZE
     hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
     edge_vocab_dim: int = BOND_VOCAB_SIZE
@@ -179,7 +179,7 @@ class GraphEmbedder(nn.Module):
             self.atom_embed_dim,
             self.hybrid_embed_dim,
             self.cont_embed_dim,
-            self.node_hidden_dim,
+            self.space.node_dim,
             self.activation,
             param_dtype=self.param_dtype,
             scale=self.node_scale,
@@ -188,7 +188,7 @@ class GraphEmbedder(nn.Module):
         edge_emb = EdgeEmbedder(
             self.edge_vocab_dim,
             self.edge_embed_dim,
-            self.edge_hidden_dim,
+            self.space.edge_dim,
             self.activation,
             param_dtype=self.param_dtype,
             scale=self.edge_scale,
