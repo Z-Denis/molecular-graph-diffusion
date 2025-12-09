@@ -29,7 +29,7 @@ class GraphDiffusionModel(nn.Module):
 
     def encode(self, graph: GraphBatch) -> GraphLatent:
         """Embed raw graph features into latent node/edge tensors."""
-        return self.embedder(graph)
+        return self.embedder(graph, graph.node_mask, graph.pair_mask)
 
     def q_sample(
         self,

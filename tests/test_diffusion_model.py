@@ -84,7 +84,7 @@ def test_sample_masks_and_shapes_reproducible():
     base_rng = jax.random.PRNGKey(42)
     out1 = sampler.sample(
         base_rng,
-        num_steps=3,
+        n_steps=3,
         batch_size=batch.atom_type.shape[0],
         n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
@@ -92,7 +92,7 @@ def test_sample_masks_and_shapes_reproducible():
     )
     out2 = sampler.sample(
         base_rng,
-        num_steps=3,
+        n_steps=3,
         batch_size=batch.atom_type.shape[0],
         n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
