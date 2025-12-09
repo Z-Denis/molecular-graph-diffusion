@@ -51,7 +51,7 @@ class GraphSampler:
         xt = self.space.random_latent(rng, batch_size, n_atoms, node_mask=node_mask, pair_mask=pair_mask)
 
         if n_steps is None:
-            n_steps = len(self.updater.schedule.betas)
+            n_steps = len(self.updater.schedule.betas) - 1
         for step in range(n_steps, 0, -1):
             t = jnp.full(xt.node.shape[:-2], step, dtype=jnp.int32)
             rng, step_rng = jax.random.split(rng)
