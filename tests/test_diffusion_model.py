@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
 
+import optax
+
 from mgd.dataset.utils import GraphBatch
 from mgd.diffusion.schedules import cosine_beta_schedule
 from mgd.latent import GraphLatentSpace
@@ -8,6 +10,7 @@ from mgd.model.denoiser import MPNNDenoiser
 from mgd.model.diffusion_model import GraphDiffusionModel
 from mgd.model.embeddings import GraphEmbedder
 from mgd.sampling import DDPMUpdater, GraphSampler
+from mgd.training.train_step import DiffusionTrainState
 
 
 def _tiny_batch():
@@ -46,6 +49,15 @@ def _tiny_model():
     return GraphDiffusionModel(embedder=embedder, denoiser=denoiser, schedule=schedule)
 
 
+def _make_state(model, params):
+    return DiffusionTrainState.create(
+        apply_fn=model.apply,
+        params=params,
+        tx=optax.identity(),
+        model=model,
+    )
+
+
 def test_training_forward_shapes_and_keys():
     batch = _tiny_batch()
     model = _tiny_model()
@@ -66,34 +78,23 @@ def test_sample_masks_and_shapes_reproducible():
     model = _tiny_model()
     rngs = {"params": jax.random.PRNGKey(0), "noise": jax.random.PRNGKey(1)}
     variables = model.init(rngs, batch, jnp.array([1, 2], dtype=jnp.int32))
-    init_latent = model.apply(variables, batch, method=model.encode)
 
     updater = DDPMUpdater(model.schedule)
-    sampler = GraphSampler(
-        predict_fn=lambda params, xt, t, node_mask, pair_mask: model.apply(
-            {"params": params},
-            xt,
-            t,
-            node_mask=node_mask,
-            pair_mask=pair_mask,
-            method=model.predict_eps,
-        ),
-        updater=updater,
-    )
+    sampler = GraphSampler(space=model.embedder.space, state=_make_state(model, variables["params"]), updater=updater)
     base_rng = jax.random.PRNGKey(42)
     out1 = sampler.sample(
         base_rng,
-        variables["params"],
         num_steps=3,
-        init_latent=init_latent,
+        batch_size=batch.atom_type.shape[0],
+        n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
         pair_mask=batch.pair_mask,
     )
     out2 = sampler.sample(
         base_rng,
-        variables["params"],
         num_steps=3,
-        init_latent=init_latent,
+        batch_size=batch.atom_type.shape[0],
+        n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
         pair_mask=batch.pair_mask,
     )

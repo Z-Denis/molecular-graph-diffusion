@@ -102,6 +102,18 @@ class AbstractLatentSpace(ABC):
     def noise_from_masks(self, rng: jax.Array, node_mask: jnp.ndarray, pair_mask: jnp.ndarray) -> GraphLatent:
         raise NotImplementedError
 
+    @abstractmethod
+    def random_latent(
+        self,
+        rng: jax.Array,
+        batch_size: int,
+        n_atoms: int,
+        node_mask: jnp.ndarray | None = None,
+        pair_mask: jnp.ndarray | None = None,
+    ) -> GraphLatent:
+        """Sample a latent with optional masks; defaults to full ones if masks are None."""
+        raise NotImplementedError
+
 
 class GraphLatentSpace(AbstractLatentSpace):
     """Concrete latent space definition for graph node/edge latents."""
@@ -139,6 +151,20 @@ class GraphLatentSpace(AbstractLatentSpace):
         nodes = jax.random.normal(rng_n, node_shape, dtype=self.dtype)
         edges = jax.random.normal(rng_e, edge_shape, dtype=self.dtype)
         return GraphLatent(nodes, edges).masked(node_mask, pair_mask)
+
+    def random_latent(
+        self,
+        rng: jax.Array,
+        batch_size: int,
+        n_atoms: int,
+        node_mask: jnp.ndarray | None = None,
+        pair_mask: jnp.ndarray | None = None,
+    ) -> GraphLatent:
+        if node_mask is None:
+            node_mask = jnp.ones((batch_size, n_atoms), dtype=self.dtype)
+        if pair_mask is None:
+            pair_mask = node_mask[..., :, None] * node_mask[..., None, :]
+        return self.noise_from_masks(rng, node_mask, pair_mask)
 
     def __repr__(self) -> str:
         return (
