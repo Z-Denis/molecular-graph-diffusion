@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Tuple
 from functools import partial
 
 import jax
@@ -24,7 +24,14 @@ class MessagePassingLayer(nn.Module):
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
-    def __call__(self, nodes: jnp.ndarray, edges: jnp.ndarray, *, node_mask: jnp.ndarray, pair_mask: jnp.ndarray):
+    def __call__(
+        self,
+        nodes: jnp.ndarray,
+        edges: jnp.ndarray,
+        *,
+        node_mask: jnp.ndarray,
+        pair_mask: jnp.ndarray,
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Updates nodes and edges.
 
         nodes: (batch..., n_atoms, node_dim)

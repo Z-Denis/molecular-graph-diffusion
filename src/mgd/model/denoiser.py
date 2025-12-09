@@ -9,45 +9,43 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
-from ..dataset.encoding import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
-from ..dataset.utils import GraphBatch
 from .backbone import MPNNBackbone
+from .utils import GraphLatent
 
 
 class MPNNDenoiser(nn.Module):
-    atom_dim: int 
-    hybrid_dim: int
-    cont_dim: int
-
     node_dim: int   # hidden_dim for nodes
     edge_dim: int   # hidden_dim for edges
     mess_dim: int   # message hidden dim
     time_dim: int   # time hidden dim
-
-    atom_vocab_dim: int = ATOM_VOCAB_SIZE
-    hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
-    bond_vocab_dim: int = BOND_VOCAB_SIZE
 
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     n_layers: int = 1
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
-    def __call__(self, graph: GraphBatch, time: jnp.ndarray):
+    def __call__(
+        self,
+        xt: GraphLatent,
+        time: jnp.ndarray,
+        *,
+        node_mask: jnp.ndarray,
+        pair_mask: jnp.ndarray,
+    ) -> GraphLatent:
         backbone = MPNNBackbone(
-            self.atom_dim, self.hybrid_dim, self.cont_dim,
-            self.node_dim, self.edge_dim, self.mess_dim, self.time_dim,
-            atom_vocab_dim=self.atom_vocab_dim,
-            hybrid_vocab_dim=self.hybrid_vocab_dim,
-            bond_vocab_dim=self.bond_vocab_dim,
+            node_dim=self.node_dim,
+            edge_dim=self.edge_dim,
+            mess_dim=self.mess_dim,
+            time_dim=self.time_dim,
             activation=self.activation,
             param_dtype=self.param_dtype,
             n_layers=self.n_layers,
-            name='backbone',
+            name="backbone",
         )
 
         # Evaluate heads
-        nodes, edges = backbone(graph, time)
+        nodes, edges = backbone(xt.node, xt.edge, time,
+                                node_mask=node_mask, pair_mask=pair_mask)
 
         # Latent to noise space
         eps_nodes = nn.Dense(
@@ -62,11 +60,11 @@ class MPNNDenoiser(nn.Module):
         )(edges)
 
         # Mask out invalid atomic positions
-        node_mask = jax.lax.stop_gradient(graph.node_mask)
-        pair_mask = jax.lax.stop_gradient(graph.pair_mask)
+        node_mask = jax.lax.stop_gradient(node_mask)
+        pair_mask = jax.lax.stop_gradient(pair_mask)
         eps_nodes = eps_nodes * node_mask[..., None]
         eps_edges = eps_edges * pair_mask[..., None]
 
-        return eps_nodes, eps_edges
+        return GraphLatent(eps_nodes, eps_edges)
 
 __all__ = ["MPNNDenoiser"]
