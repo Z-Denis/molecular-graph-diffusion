@@ -9,13 +9,13 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
+from ..latent import GraphLatentSpace
 from .embeddings import TimeEmbedding
 from .gnn_layers import MessagePassingLayer
 
 
 class MPNNBackbone(nn.Module):
-    node_dim: int   # hidden_dim for nodes
-    edge_dim: int   # hidden_dim for edges
+    space: GraphLatentSpace
     mess_dim: int   # message hidden dim
     time_dim: int   # time hidden dim
 
@@ -34,23 +34,23 @@ class MPNNBackbone(nn.Module):
         pair_mask: jnp.ndarray,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         node_dim, edge_dim = nodes.shape[-1], edges.shape[-1]
-        if node_dim != self.node_dim or edge_dim != self.edge_dim:
+        if node_dim != self.space.node_dim or edge_dim != self.space.edge_dim:
             raise ValueError(
                 f"Backbone received node/edge dims {(node_dim, edge_dim)} "
-                f"but was initialized with {(self.node_dim, self.edge_dim)}."
+                f"but was initialized with {(self.space.node_dim, self.space.edge_dim)}."
             )
         time_emb = TimeEmbedding(
             self.time_dim,
-            self.node_dim,
-            self.edge_dim,
+            self.space.node_dim,
+            self.space.edge_dim,
             self.activation,
             param_dtype=self.param_dtype,
             name="time_embedding",
         )
         mpnn = partial(
             MessagePassingLayer,
-            self.node_dim,
-            self.edge_dim,
+            self.space.node_dim,
+            self.space.edge_dim,
             self.mess_dim,
             activation=self.activation,
             param_dtype=self.param_dtype,

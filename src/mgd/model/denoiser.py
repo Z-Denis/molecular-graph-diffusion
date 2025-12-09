@@ -9,13 +9,13 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
-from ..latent import GraphLatent
+from ..latent import GraphLatent, GraphLatentSpace
 from .backbone import MPNNBackbone
 
 
 class MPNNDenoiser(nn.Module):
-    node_dim: int   # hidden_dim for nodes
-    edge_dim: int   # hidden_dim for edges
+    space: GraphLatentSpace
+    
     mess_dim: int   # message hidden dim
     time_dim: int   # time hidden dim
 
@@ -33,8 +33,7 @@ class MPNNDenoiser(nn.Module):
         pair_mask: jnp.ndarray,
     ) -> GraphLatent:
         backbone = MPNNBackbone(
-            node_dim=self.node_dim,
-            edge_dim=self.edge_dim,
+            space=self.space,
             mess_dim=self.mess_dim,
             time_dim=self.time_dim,
             activation=self.activation,
@@ -49,12 +48,12 @@ class MPNNDenoiser(nn.Module):
 
         # Latent to noise space
         eps_nodes = nn.Dense(
-            self.node_dim, param_dtype=self.param_dtype,
+            self.space.node_dim, param_dtype=self.param_dtype,
             kernel_init=nn.initializers.normal(1e-6),
             name="node_head",
         )(nodes)
         eps_edges = nn.Dense(
-            self.edge_dim, param_dtype=self.param_dtype,
+            self.space.edge_dim, param_dtype=self.param_dtype,
             kernel_init=nn.initializers.normal(1e-6),
             name="edge_head",
         )(edges)

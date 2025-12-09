@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any
 
 import flax
@@ -104,13 +103,26 @@ class AbstractLatentSpace(ABC):
         raise NotImplementedError
 
 
-@dataclass
 class GraphLatentSpace(AbstractLatentSpace):
     """Concrete latent space definition for graph node/edge latents."""
 
-    node_dim: int
-    edge_dim: int
-    dtype: jnp.dtype = jnp.float32
+    def __init__(self, node_dim: int, edge_dim: int, dtype: jnp.dtype = jnp.float32):
+        self._node_dim = int(node_dim)
+        self._edge_dim = int(edge_dim)
+        self._dtype = dtype
+
+    # Abstract property implementations
+    @property
+    def node_dim(self) -> int:  # type: ignore[override]
+        return self._node_dim
+
+    @property
+    def edge_dim(self) -> int:  # type: ignore[override]
+        return self._edge_dim
+
+    @property
+    def dtype(self):  # type: ignore[override]
+        return self._dtype
 
     def zeros_from_masks(self, node_mask: jnp.ndarray, pair_mask: jnp.ndarray) -> GraphLatent:
         node_shape = node_mask.shape + (self.node_dim,)
@@ -127,6 +139,12 @@ class GraphLatentSpace(AbstractLatentSpace):
         nodes = jax.random.normal(rng_n, node_shape, dtype=self.dtype)
         edges = jax.random.normal(rng_e, edge_shape, dtype=self.dtype)
         return GraphLatent(nodes, edges).masked(node_mask, pair_mask)
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}(node_dim={self.node_dim}, "
+            f"edge_dim={self.edge_dim}, dtype={self.dtype})"
+        )
 
 
 __all__ = [
