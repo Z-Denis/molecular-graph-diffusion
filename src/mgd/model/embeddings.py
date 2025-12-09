@@ -15,7 +15,7 @@ from ..latent import GraphLatent, GraphLatentSpace
 
 
 class NodeEmbedder(nn.Module):
-    """Embed atom categorical + continuous features into a shared hidden space.
+    """Embed atom categorical + continuous features into a shared hidden space (no mask!).
 
     Args:
         atom_vocab: Vocabulary size for atom embeddings (include padding slot).
@@ -79,7 +79,7 @@ class NodeEmbedder(nn.Module):
 
 
 class EdgeEmbedder(nn.Module):
-    """Embed bond categorical features into a shared hidden space."""
+    """Embed bond categorical features into a shared hidden space (no mask!)."""
 
     edge_vocab: int
     edge_embed_dim: int
@@ -172,7 +172,12 @@ class GraphEmbedder(nn.Module):
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
-    def __call__(self, graph: GraphBatch) -> GraphLatent:
+    def __call__(
+        self, 
+        graph: GraphBatch, 
+        node_mask: jnp.ndarray, 
+        pair_mask: jnp.ndarray
+        ) -> GraphLatent:
         node_emb = NodeEmbedder(
             self.atom_vocab_dim,
             self.hybrid_vocab_dim,
@@ -202,7 +207,7 @@ class GraphEmbedder(nn.Module):
         )
         edges = edge_emb(graph.edges)
 
-        return GraphLatent(nodes, edges)
+        return GraphLatent(nodes, edges).masked(node_mask, pair_mask)
 
 
 __all__ = ["NodeEmbedder", "EdgeEmbedder", "GraphEmbedder", "sinusoidal_time_embedding", "TimeEmbedding"]
