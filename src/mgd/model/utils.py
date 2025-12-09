@@ -24,6 +24,7 @@ class MLP(nn.Module):
     n_layers: Optional[int] = None
     activation: Callable = nn.gelu
     param_dtype: DTypeLike = "float32"
+    post_activation: Callable | None = None
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -38,6 +39,8 @@ class MLP(nn.Module):
             x = nn.Dense(features=size, param_dtype=self.param_dtype, name=f"dense_{i}")(x)
             if i < len(layer_sizes) - 1:
                 x = self.activation(x)
+        if self.post_activation:
+            x = self.post_activation(x)
         return x
 
 
