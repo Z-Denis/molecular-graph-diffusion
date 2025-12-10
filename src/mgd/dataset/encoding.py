@@ -99,6 +99,8 @@ def featurize_components(
             edge_types[i, j] = BOND_TO_ID.get(bond_type, 0)
 
     pair_mask = node_mask[:, None] * node_mask[None, :]
+    # remove self-interactions
+    pair_mask = pair_mask * (1.0 - np.eye(MAX_NODES, dtype=dtype))
     return atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask
 
 

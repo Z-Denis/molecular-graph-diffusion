@@ -11,11 +11,11 @@ from flax import linen as nn
 
 from ..dataset.encoding import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
 from ..dataset.utils import GraphBatch
-from .utils import GraphLatent
+from ..latent import GraphLatent, GraphLatentSpace
 
 
 class NodeEmbedder(nn.Module):
-    """Embed atom categorical + continuous features into a shared hidden space.
+    """Embed atom categorical + continuous features into a shared hidden space (no mask!).
 
     Args:
         atom_vocab: Vocabulary size for atom embeddings (include padding slot).
@@ -79,7 +79,7 @@ class NodeEmbedder(nn.Module):
 
 
 class EdgeEmbedder(nn.Module):
-    """Embed bond categorical features into a shared hidden space."""
+    """Embed bond categorical features into a shared hidden space (no mask!)."""
 
     edge_vocab: int
     edge_embed_dim: int
@@ -154,13 +154,13 @@ class TimeEmbedding(nn.Module):
 class GraphEmbedder(nn.Module):
     """Embed raw graph categorical/continuous features into latent node/edge tensors."""
 
+    space: GraphLatentSpace
+    
     atom_embed_dim: int
     hybrid_embed_dim: int
     cont_embed_dim: int
-
-    node_hidden_dim: int   # hidden_dim for nodes
     edge_embed_dim: int    # embed dim for edges
-    edge_hidden_dim: int   # hidden_dim for edges
+
     atom_vocab_dim: int = ATOM_VOCAB_SIZE
     hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
     edge_vocab_dim: int = BOND_VOCAB_SIZE
@@ -172,14 +172,19 @@ class GraphEmbedder(nn.Module):
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
-    def __call__(self, graph: GraphBatch) -> GraphLatent:
+    def __call__(
+        self, 
+        graph: GraphBatch, 
+        node_mask: jnp.ndarray, 
+        pair_mask: jnp.ndarray
+        ) -> GraphLatent:
         node_emb = NodeEmbedder(
             self.atom_vocab_dim,
             self.hybrid_vocab_dim,
             self.atom_embed_dim,
             self.hybrid_embed_dim,
             self.cont_embed_dim,
-            self.node_hidden_dim,
+            self.space.node_dim,
             self.activation,
             param_dtype=self.param_dtype,
             scale=self.node_scale,
@@ -188,7 +193,7 @@ class GraphEmbedder(nn.Module):
         edge_emb = EdgeEmbedder(
             self.edge_vocab_dim,
             self.edge_embed_dim,
-            self.edge_hidden_dim,
+            self.space.edge_dim,
             self.activation,
             param_dtype=self.param_dtype,
             scale=self.edge_scale,
@@ -202,7 +207,7 @@ class GraphEmbedder(nn.Module):
         )
         edges = edge_emb(graph.edges)
 
-        return GraphLatent(nodes, edges)
+        return GraphLatent(nodes, edges).masked(node_mask, pair_mask)
 
 
 __all__ = ["NodeEmbedder", "EdgeEmbedder", "GraphEmbedder", "sinusoidal_time_embedding", "TimeEmbedding"]

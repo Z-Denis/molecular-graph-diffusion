@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
+from typing import Callable, Iterable, Optional, Sequence, Tuple, Union
 
 from jax.typing import DTypeLike
 import jax.numpy as jnp
 from flax import linen as nn
-import flax
 
 FeaturesArg = Union[int, Sequence[int]]
 
@@ -25,6 +24,7 @@ class MLP(nn.Module):
     n_layers: Optional[int] = None
     activation: Callable = nn.gelu
     param_dtype: DTypeLike = "float32"
+    post_activation: Callable | None = None
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -39,6 +39,8 @@ class MLP(nn.Module):
             x = nn.Dense(features=size, param_dtype=self.param_dtype, name=f"dense_{i}")(x)
             if i < len(layer_sizes) - 1:
                 x = self.activation(x)
+        if self.post_activation:
+            x = self.post_activation(x)
         return x
 
 
@@ -93,70 +95,4 @@ def aggregate_node_edge(
     return reducer(parts)
 
 
-@flax.struct.dataclass
-class GraphLatent:
-    """Container for node/edge latent tensors with basic arithmetic support."""
-
-    node: jnp.ndarray
-    edge: jnp.ndarray
-    __array_priority__ = 1000
-
-    def masked(self, node_mask, pair_mask):
-        return GraphLatent(
-            self.node * node_mask[..., None],
-            self.edge * pair_mask[..., None],
-        )
-
-    def __add__(self, other: Any) -> "GraphLatent":
-        if isinstance(other, GraphLatent):
-            return type(self)(jnp.add(self.node, other.node), jnp.add(self.edge, other.edge))
-        return type(self)(jnp.add(self.node, other), jnp.add(self.edge, other))
-
-    def __radd__(self, other: Any) -> "GraphLatent":
-        return self.__add__(other)
-
-    def __sub__(self, other: Any) -> "GraphLatent":
-        if isinstance(other, GraphLatent):
-            return type(self)(jnp.subtract(self.node, other.node), jnp.subtract(self.edge, other.edge))
-        return type(self)(jnp.subtract(self.node, other), jnp.subtract(self.edge, other))
-
-    def __rsub__(self, other: Any) -> "GraphLatent":
-        if isinstance(other, GraphLatent):
-            return type(self)(jnp.subtract(other.node, self.node), jnp.subtract(other.edge, self.edge))
-        return type(self)(jnp.subtract(other, self.node), jnp.subtract(other, self.edge))
-
-    def __mul__(self, other: Any) -> "GraphLatent":
-        if isinstance(other, GraphLatent):
-            return type(self)(jnp.multiply(self.node, other.node), jnp.multiply(self.edge, other.edge))
-        return type(self)(jnp.multiply(self.node, other), jnp.multiply(self.edge, other))
-
-    def __rmul__(self, other: Any) -> "GraphLatent":
-        return self.__mul__(other)
-
-    def __truediv__(self, other: Any) -> "GraphLatent":
-        if isinstance(other, GraphLatent):
-            return type(self)(jnp.divide(self.node, other.node), jnp.divide(self.edge, other.edge))
-        return type(self)(jnp.divide(self.node, other), jnp.divide(self.edge, other))
-
-    def __rtruediv__(self, other: Any) -> "GraphLatent":
-        if isinstance(other, GraphLatent):
-            return type(self)(jnp.divide(other.node, self.node), jnp.divide(other.edge, self.edge))
-        return type(self)(jnp.divide(other, self.node), jnp.divide(other, self.edge))
-
-    def __neg__(self) -> "GraphLatent":
-        return type(self)(-self.node, -self.edge)
-
-
-def latent_from_scalar(value: jnp.ndarray, node_ndim: int = 2, edge_ndim: int = 3) -> GraphLatent:
-    """Broadcast a scalar/array to node and edge shapes with trailing ones.
-
-    Examples:
-        latent_from_scalar(s)  -> node shape (..., 1, 1), edge shape (..., 1, 1, 1)
-        latent_from_scalar(s, node_ndim=3, edge_ndim=4) -> (..., 1,1,1) and (...,1,1,1,1)
-    """
-    node = jnp.reshape(value, value.shape + (1,) * node_ndim)
-    edge = jnp.reshape(value, value.shape + (1,) * edge_ndim)
-    return GraphLatent(node=node, edge=edge)
-
-
-__all__ = ["MLP", "aggregate_node_edge", "GraphLatent", "latent_from_scalar"]
+__all__ = ["MLP", "aggregate_node_edge"]

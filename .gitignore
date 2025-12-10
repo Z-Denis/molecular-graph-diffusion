@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 .python-version
 .venv/
+*.egg-info/
+src/mgd.egg-info/
+.orbax-checkpoint*/
+checkpoints/
 
 # Data and outputs
 data/raw/

@@ -14,7 +14,7 @@ class GraphBatch:
     atom_type: jnp.ndarray
     hybrid: jnp.ndarray
     cont: jnp.ndarray
-    edges: jnp.ndarray
+    edges: jnp.ndarray  # TODO: name it more consistently e.g. bond_type
     node_mask: jnp.ndarray
     pair_mask: jnp.ndarray
 

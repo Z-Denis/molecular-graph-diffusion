@@ -1,11 +1,16 @@
 import jax
 import jax.numpy as jnp
 
+import optax
+
 from mgd.dataset.utils import GraphBatch
 from mgd.diffusion.schedules import cosine_beta_schedule
+from mgd.latent import GraphLatentSpace
 from mgd.model.denoiser import MPNNDenoiser
 from mgd.model.diffusion_model import GraphDiffusionModel
 from mgd.model.embeddings import GraphEmbedder
+from mgd.sampling import DDPMUpdater, LatentSampler
+from mgd.training.train_step import DiffusionTrainState
 
 
 def _tiny_batch():
@@ -27,22 +32,30 @@ def _tiny_batch():
 
 
 def _tiny_model():
+    space = GraphLatentSpace(node_dim=5, edge_dim=4, dtype=jnp.float32)
     embedder = GraphEmbedder(
+        space=space,
         atom_embed_dim=4,
         hybrid_embed_dim=3,
         cont_embed_dim=2,
-        node_hidden_dim=5,
         edge_embed_dim=3,
-        edge_hidden_dim=4,
     )
     denoiser = MPNNDenoiser(
-        node_dim=5,
-        edge_dim=4,
+        space=space,
         mess_dim=6,
         time_dim=8,
     )
     schedule = cosine_beta_schedule(timesteps=10)
     return GraphDiffusionModel(embedder=embedder, denoiser=denoiser, schedule=schedule)
+
+
+def _make_state(model, params):
+    return DiffusionTrainState.create(
+        apply_fn=model.apply,
+        params=params,
+        tx=optax.identity(),
+        model=model,
+    )
 
 
 def test_training_forward_shapes_and_keys():
@@ -56,8 +69,8 @@ def test_training_forward_shapes_and_keys():
         assert key in outputs
         assert isinstance(outputs[key].node, jnp.ndarray)
         assert isinstance(outputs[key].edge, jnp.ndarray)
-    assert outputs["eps_pred"].node.shape == batch.cont.shape[:2] + (5,)
-    assert outputs["eps_pred"].edge.shape == batch.pair_mask.shape + (4,)
+    assert outputs["eps_pred"].node.shape == batch.cont.shape[:2] + (model.embedder.space.node_dim,)
+    assert outputs["eps_pred"].edge.shape == batch.pair_mask.shape + (model.embedder.space.edge_dim,)
 
 
 def test_sample_masks_and_shapes_reproducible():
@@ -65,24 +78,23 @@ def test_sample_masks_and_shapes_reproducible():
     model = _tiny_model()
     rngs = {"params": jax.random.PRNGKey(0), "noise": jax.random.PRNGKey(1)}
     variables = model.init(rngs, batch, jnp.array([1, 2], dtype=jnp.int32))
-    init_latent = model.apply(variables, batch, method=model.encode)
 
+    updater = DDPMUpdater(model.schedule)
+    sampler = LatentSampler(space=model.embedder.space, state=_make_state(model, variables["params"]), updater=updater)
     base_rng = jax.random.PRNGKey(42)
-    out1 = model.apply(
-        variables,
-        method=model.sample,
-        rng=base_rng,
-        num_steps=3,
-        init_latent=init_latent,
+    out1 = sampler.sample(
+        base_rng,
+        n_steps=3,
+        batch_size=batch.atom_type.shape[0],
+        n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
         pair_mask=batch.pair_mask,
     )
-    out2 = model.apply(
-        variables,
-        method=model.sample,
-        rng=base_rng,
-        num_steps=3,
-        init_latent=init_latent,
+    out2 = sampler.sample(
+        base_rng,
+        n_steps=3,
+        batch_size=batch.atom_type.shape[0],
+        n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
         pair_mask=batch.pair_mask,
     )

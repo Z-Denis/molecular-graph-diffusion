@@ -20,6 +20,28 @@ class DiffusionTrainState(train_state.TrainState):
 
     model: GraphDiffusionModel = flax.struct.field(pytree_node=False)
 
+    def encode(self, batch: GraphBatch):
+        """Encode a graph batch to latents using current params."""
+        return self.model.apply({"params": self.params}, batch, method=self.model.encode)
+
+    def predict_eps(
+        self,
+        xt,
+        t,
+        *,
+        node_mask,
+        pair_mask,
+    ):
+        """Alias to model.predict_eps bound with current params."""
+        return self.model.apply(
+            {"params": self.params},
+            xt,
+            t,
+            node_mask=node_mask,
+            pair_mask=pair_mask,
+            method=self.model.predict_eps,
+        )
+
 
 def create_train_state(
     model: GraphDiffusionModel,
