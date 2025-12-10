@@ -13,7 +13,7 @@ def compute_class_weights(
     loader: Iterable[GraphBatch],
     num_classes: int,
     *,
-    pad_value: int = 0,
+    pad_value: int | None = None,
     label_getter: Callable[[GraphBatch], np.ndarray] = lambda batch: batch.atom_type,
     mask_getter: Callable[[GraphBatch], np.ndarray] = lambda batch: batch.node_mask,
     scheme: str = "sqrt_inv",
@@ -45,7 +45,10 @@ def compute_class_weights(
 
     if counts.sum() == 0:
         raise ValueError("No valid labels found when computing class weights.")
-    
+
+    if pad_value is not None and 0 <= pad_value < num_classes:
+        counts[pad_value] = 0.0
+
     if scheme == "inv":
         weights = 1.0 / (counts + eps)
     elif scheme == "sqrt_inv":
@@ -90,33 +93,41 @@ def compute_occupation_log_weights(
 def mask_logits(
     logits: np.ndarray,
     mask: np.ndarray,
-    pad_class: int = 0,
+    pad_class: int | None = 0,
 ) -> np.ndarray:
-    """Mask logits so padded positions cannot select non-padding classes.
+    """Mask logits with optional padding class handling.
 
-    For positions where mask == 0, logits for all classes except ``pad_class`` are set to -inf.
-    Args:
-        logits: array of shape (..., num_classes)
-        mask: broadcastable to logits[..., 0]; entries 1=valid, 0=pad
-        pad_class: index of padding class
+    - If pad_class is None: all classes are set to -inf where mask == 0.
+    - Otherwise: logits for ``pad_class`` are always set to -inf, and all classes
+      are set to -inf where mask == 0.
     """
     masked = np.array(logits, copy=True)
     valid = np.array(mask, copy=False).astype(bool)
-    if pad_class < 0 or pad_class >= logits.shape[-1]:
-        raise ValueError(f"pad_class {pad_class} out of range for logits dim {logits.shape[-1]}")
-    # Build a mask over classes
-    class_mask = np.ones(logits.shape[-1], dtype=bool)
-    class_mask[pad_class] = False
-    # Apply only where invalid positions; broadcast to classes
-    invalid_idx = ~valid
-    if invalid_idx.any():
-        expand_shape = invalid_idx.shape + (logits.shape[-1],)
-        class_mask_full = np.broadcast_to(class_mask, expand_shape)
+    n_classes = logits.shape[-1]
+
+    if pad_class is None:
+        invalid_idx = ~valid
         masked = np.where(
-            np.broadcast_to(invalid_idx[..., None], expand_shape) & class_mask_full,
+            np.broadcast_to(invalid_idx[..., None], masked.shape),
             -np.inf,
             masked,
         )
+        return masked
+
+    if pad_class < 0 or pad_class >= n_classes:
+        raise ValueError(f"pad_class {pad_class} out of range for logits dim {n_classes}")
+
+    expand_shape = valid.shape + (n_classes,)
+    # Always block pad_class
+    pad_mask = np.broadcast_to(np.arange(n_classes) == pad_class, expand_shape)
+    masked = np.where(pad_mask, -np.inf, masked)
+    # Mask all classes where invalid
+    invalid_idx = ~valid
+    masked = np.where(
+        np.broadcast_to(invalid_idx[..., None], expand_shape),
+        -np.inf,
+        masked,
+    )
     return masked
 
 
