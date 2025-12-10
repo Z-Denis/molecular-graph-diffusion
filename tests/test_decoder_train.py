@@ -21,7 +21,7 @@ def test_decoder_train_step_reduces_loss():
     model = NodeCategoricalDecoder(hidden_dim=8, n_layers=1, n_categories=3)
     tx = optax.sgd(0.5)
 
-    state = create_decoder_state(model, latent, mask, tx, rng)
+    state = create_decoder_state(model, latent, tx, rng)
 
     def compute_loss(params):
         logits = state.model.apply({"params": params}, latent)
@@ -49,7 +49,7 @@ def test_predict_logits_matches_apply():
     targets = jnp.zeros((1, 2), dtype=jnp.int32)
     model = NodeCategoricalDecoder(hidden_dim=4, n_layers=1, n_categories=3)
     tx = optax.sgd(0.1)
-    state = create_decoder_state(model, latent, mask, tx, rng)
+    state = create_decoder_state(model, latent, tx, rng)
 
     logits_apply = model.apply({"params": state.params}, latent)
     logits_state = state.predict_logits(latent)
@@ -63,7 +63,7 @@ def test_predict_logits_accepts_graphlatent():
     targets = jnp.zeros((1, 2), dtype=jnp.int32)
     model = NodeCategoricalDecoder(hidden_dim=4, n_layers=1, n_categories=3)
     tx = optax.sgd(0.1)
-    state = create_decoder_state(model, latent, mask, tx, rng)
+    state = create_decoder_state(model, latent, tx, rng)
 
     # expects array input
     logits = state.predict_logits(latent)

@@ -15,7 +15,7 @@ def test_compute_class_weights_masks_padding():
         pair_mask=np.ones((2, 3, 3), dtype=np.float32),
     )
     loader = [batch]
-    weights = compute_class_weights(loader, num_classes=3, pad_value=0)
+    weights = compute_class_weights(loader, num_classes=3)
     # padding weight should not blow up, and weights are mean-normalized
     assert weights.shape == (3,)
     assert np.isfinite(weights).all()
