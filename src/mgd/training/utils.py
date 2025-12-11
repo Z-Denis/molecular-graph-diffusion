@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
+import itertools
 
 import numpy as np
 
@@ -11,42 +12,52 @@ from mgd.dataset.utils import GraphBatch
 
 def compute_class_weights(
     loader: Iterable[GraphBatch],
-    num_classes: int,
+    n_classes: int,
     *,
     pad_value: int | None = None,
     label_getter: Callable[[GraphBatch], np.ndarray] = lambda batch: batch.atom_type,
     mask_getter: Callable[[GraphBatch], np.ndarray] = lambda batch: batch.node_mask,
     scheme: str = "sqrt_inv",
     eps: float = 1e-8,
+    max_batches: Optional[int] = None,
 ) -> np.ndarray:
     """Estimate class weights from a masked loader.
 
     Args:
         loader: iterable of GraphBatch.
-        num_classes: total number of classes (including padding).
+        n_classes: total number of classes (including padding).
         pad_value: label used for padding/unknown that should not drive weights.
         label_getter: function extracting integer labels from a batch.
         mask_getter: function extracting a mask aligned with labels (1=valid).
         scheme: "inv" (1/freq) or "sqrt_inv" (1/sqrt(freq)).
         eps: small constant to avoid division by zero.
+        max_batches: optional cap on number of batches to consume (useful for streaming loaders).
 
     Returns:
-        np.ndarray of shape (num_classes,) with mean-normalized weights.
+        np.ndarray of shape (n_classes,) with mean-normalized weights.
     """
-    counts = np.zeros((num_classes,), dtype=np.float64)
+    counts = np.zeros((n_classes,), dtype=np.float64)
 
-    for batch in loader:
+    if max_batches is None:
+        try:
+            max_batches = len(loader)
+        except TypeError:
+            max_batches = None
+
+    iterator = itertools.islice(loader, max_batches) if max_batches is not None else loader
+
+    for batch in iterator:
         labels = np.asarray(label_getter(batch))
         mask = np.asarray(mask_getter(batch)) > 0.5
         valid_labels = labels[mask]
         if valid_labels.size == 0:
             continue
-        counts += np.bincount(valid_labels, minlength=num_classes)
+        counts += np.bincount(valid_labels, minlength=n_classes)
 
     if counts.sum() == 0:
         raise ValueError("No valid labels found when computing class weights.")
 
-    if pad_value is not None and 0 <= pad_value < num_classes:
+    if pad_value is not None and 0 <= pad_value < n_classes:
         counts[pad_value] = 0.0
 
     if scheme == "inv":
@@ -64,6 +75,8 @@ def compute_class_weights(
 def compute_occupation_log_weights(
     loader: Iterable[GraphBatch],
     n_atom_max: int,
+    *,
+    max_batches: Optional[int] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute log-weights over molecule sizes (number of atoms) from a loader.
 
@@ -72,7 +85,15 @@ def compute_occupation_log_weights(
     """
     occupation_counts = np.zeros(n_atom_max + 1, dtype=np.int64)
 
-    for batch in loader:
+    if max_batches is None:
+        try:
+            max_batches = len(loader)
+        except TypeError:
+            max_batches = None
+
+    iterator = itertools.islice(loader, max_batches) if max_batches is not None else loader
+
+    for batch in iterator:
         # node_mask has shape (batch, n_atoms); sum gives actual atom count
         occupation = np.array(batch.node_mask.astype(int)).sum(axis=-1)
         max_occ = occupation.max(initial=0)

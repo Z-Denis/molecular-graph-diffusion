@@ -24,32 +24,38 @@ def _mean_metrics(history: List[Dict[str, jnp.ndarray]]) -> Dict[str, jnp.ndarra
 def train_loop(
     state: DiffusionTrainState,
     loader: Iterable[GraphBatch],
-    num_epochs: int,
+    *,
+    n_steps: int,
     rng: jax.Array,
     log_every: int = 0,
     ckpt_dir: str | None = None,
     ckpt_every: int | None = None,
 ) -> Tuple[DiffusionTrainState, List[Dict[str, jnp.ndarray]]]:
-    """Simple epoch-based training loop."""
+    """Step-based training loop (streaming over the loader as needed)."""
     step_fn = jax.jit(train_step)
     history: List[Dict[str, jnp.ndarray]] = []
 
-    for epoch in tqdm(range(num_epochs)):
-        rng, epoch_rng = jax.random.split(rng)
-        epoch_metrics: List[Dict[str, jnp.ndarray]] = []
-        for step, batch in enumerate(loader):
-            epoch_rng, step_rng = jax.random.split(epoch_rng)
+    metrics_buffer: List[Dict[str, jnp.ndarray]] = []
+    loader_iter = iter(loader)
+
+    with tqdm(total=n_steps) as pbar:
+        for step in range(1, n_steps + 1):
+            rng, step_rng = jax.random.split(rng)
+            batch = next(loader_iter)
             state, metrics = step_fn(state, batch, step_rng)
-            epoch_metrics.append(metrics)
-            if log_every and (step + 1) % log_every == 0:
+            metrics_buffer.append(metrics)
+            pbar.update(1)
+            if log_every and (step % log_every == 0):
                 loss_val = float(metrics["loss"])
-                print(f"epoch {epoch+1} step {step+1}: loss={loss_val:.4f}")
+                pbar.set_postfix(loss=f"{loss_val:.4f}")
+                history.append(_mean_metrics(metrics_buffer))
+                metrics_buffer = []
 
-        mean_metrics = _mean_metrics(epoch_metrics)
-        history.append(mean_metrics)
+            if ckpt_dir and ckpt_every and (step % ckpt_every == 0):
+                save_checkpoint(ckpt_dir, state, step=step)
 
-        if ckpt_dir and ckpt_every and (epoch + 1) % ckpt_every == 0:
-            save_checkpoint(ckpt_dir, state, step=epoch + 1)
+    if metrics_buffer:
+        history.append(_mean_metrics(metrics_buffer))
 
     return state, history
 
