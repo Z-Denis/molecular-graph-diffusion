@@ -32,6 +32,8 @@ def _prepare_masks(
         node_mask = (arange[None, :] < n_atoms_arr[:, None]).astype(space_dtype)
     if pair_mask is None:
         pair_mask = node_mask[..., :, None] * node_mask[..., None, :]
+        eye = jnp.eye(max_atoms, dtype=pair_mask.dtype)
+        pair_mask = pair_mask * (1.0 - eye)
 
     return batch_size, max_atoms, node_mask, pair_mask
 
