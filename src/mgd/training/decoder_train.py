@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
-
-from functools import partial
+from typing import Callable, Dict, Optional, Tuple
 
 import flax
 import jax
@@ -50,25 +48,18 @@ def decoder_train_step(
     targets: jnp.ndarray,
     mask: jnp.ndarray,
     *,
-    model_kwargs: Optional[Dict] = None,
-    class_weights: Optional[jnp.ndarray] = None,
-    label_smoothing: Optional[float] = None,
+    loss_fn: Callable = masked_cross_entropy,
+    loss_kwargs: Optional[Dict] = None,
 ) -> Tuple[DecoderTrainState, Dict[str, jnp.ndarray]]:
-    """One optimization step for a decoder with masked cross-entropy."""
-    model_kwargs = model_kwargs or {}
+    """One optimization step for a decoder with a configurable loss."""
+    loss_kwargs = loss_kwargs or {}
 
-    def loss_fn(params):
-        logits = state.model.apply({"params": params}, latents, **model_kwargs)
-        loss, metrics = masked_cross_entropy(
-            logits,
-            targets,
-            mask,
-            class_weights=class_weights,
-            use_label_smoothing=label_smoothing,
-        )
+    def _loss(params):
+        logits = state.model.apply({"params": params}, latents)
+        loss, metrics = loss_fn(logits, targets, mask, **loss_kwargs)
         return loss, metrics
 
-    (loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
+    (loss, metrics), grads = jax.value_and_grad(_loss, has_aux=True)(state.params)
     state = state.apply_gradients(grads=grads)
     metrics = {"loss": loss, **metrics}
     return state, metrics
@@ -83,14 +74,15 @@ def decoder_train_loop(
     log_every: int = 0,
     ckpt_dir: str | None = None,
     ckpt_every: int | None = None,
-    class_weights: Optional[jnp.ndarray] = None,
-    label_smoothing: Optional[float] = None,
     feature_type: str = "node",
+    loss_fn: Callable = masked_cross_entropy,
+    loss_kwargs: Optional[Dict] = None,
 ):
-    """Epoch-based training loop for decoders.
+    """Step-based training loop for decoders.
 
     ``loader`` is expected to yield GraphBatch.
     feature_type: "node" (uses atom_type/node_mask) or "edge" (uses edges/pair_mask).
+    ``loss_fn`` must follow the signature ``loss_fn(logits, targets, mask, **kwargs)``.
     """
     from mgd.training.checkpoints import save_checkpoint  # local import to avoid cycles
 
@@ -100,18 +92,18 @@ def decoder_train_loop(
         stacked = {k: jnp.stack([m[k] for m in history]) for k in history[0]}
         return {k: v.mean() for k, v in stacked.items()}
 
+    loss_kwargs = loss_kwargs or {}
     step_fn = jax.jit(
         lambda st, l, y, m: decoder_train_step(
             st,
             l,
             y,
             m,
-            class_weights=class_weights,
-            label_smoothing=ls_value,
+            loss_fn=loss_fn,
+            loss_kwargs=loss_kwargs,
         ),
         static_argnames=(),
     )
-    ls_value = label_smoothing
     history = []
     metrics_buffer = []
     loader_iter = iter(loader)
