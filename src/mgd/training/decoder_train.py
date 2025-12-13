@@ -11,6 +11,7 @@ import optax
 from flax.training import train_state
 
 from mgd.training.losses import masked_cross_entropy
+from mgd.utils.logging import Logger
 from .train_step import DiffusionTrainState
 from tqdm import tqdm
 
@@ -71,18 +72,17 @@ def decoder_train_loop(
     loader,
     *,
     n_steps: int,
-    log_every: int = 0,
-    ckpt_dir: str | None = None,
-    ckpt_every: int | None = None,
     feature_type: str = "node",
     loss_fn: Callable = masked_cross_entropy,
     loss_kwargs: Optional[Dict] = None,
+    logger: Logger,
 ):
     """Step-based training loop for decoders.
 
     ``loader`` is expected to yield GraphBatch.
     feature_type: "node" (uses atom_type/node_mask) or "edge" (uses edges/pair_mask).
     ``loss_fn`` must follow the signature ``loss_fn(logits, targets, mask, **kwargs)``.
+    A ``Logger`` must be provided; it controls logging and checkpoints.
     """
     from mgd.training.checkpoints import save_checkpoint  # local import to avoid cycles
 
@@ -130,15 +130,16 @@ def decoder_train_loop(
             )
             metrics_buffer.append(metrics)
             pbar.update(1)
-            if log_every and (step % log_every == 0):
+            if logger.log_every and (step % logger.log_every == 0):
                 loss_val = float(metrics["loss"])
                 pbar.set_postfix(loss=f"{loss_val:.4f}")
-                history.append(_mean_metrics(metrics_buffer))
+            if logger.maybe_log(step, metrics_buffer):
+                history.append(logger.data[-1])
                 metrics_buffer = []
-            if ckpt_dir and ckpt_every and (step % ckpt_every == 0):
-                save_checkpoint(ckpt_dir, decoder_state, step=step)
+            logger.maybe_checkpoint(step, decoder_state)
     if metrics_buffer:
         history.append(_mean_metrics(metrics_buffer))
+        logger.data.append(history[-1])
     return decoder_state, history
 
 
