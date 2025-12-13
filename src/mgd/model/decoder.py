@@ -7,6 +7,7 @@ from typing import Callable
 import jax.numpy as jnp
 from flax import linen as nn
 from jax.typing import DTypeLike
+from jax.nn.initializers import zeros
 
 # Use absolute import to avoid any relative import ambiguity
 from mgd.model.utils import MLP
@@ -50,6 +51,7 @@ class EdgeCategoricalDecoder(nn.Module):
     n_layers: int
     n_categories: int
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
+    bond_bias_init: Callable = zeros
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
@@ -62,7 +64,9 @@ class EdgeCategoricalDecoder(nn.Module):
             activation=self.activation,
             param_dtype=self.param_dtype,
         )
-        head = nn.Dense(self.n_categories, param_dtype=self.param_dtype)
+        head = nn.Dense(
+            self.n_categories, param_dtype=self.param_dtype, bias_init=self.bond_bias_init
+            )
 
         h = ln(edge_latent)
         h = mlp(h)
