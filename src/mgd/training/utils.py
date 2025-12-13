@@ -20,8 +20,9 @@ def compute_class_weights(
     scheme: str = "sqrt_inv",
     eps: float = 1e-8,
     max_batches: Optional[int] = None,
-) -> np.ndarray:
-    """Estimate class weights from a masked loader.
+    return_counts: bool = False,
+) -> tuple[np.ndarray, np.ndarray] | np.ndarray:
+    """Estimate class weights from a masked loader and return raw counts.
 
     Args:
         loader: iterable of GraphBatch.
@@ -34,7 +35,8 @@ def compute_class_weights(
         max_batches: optional cap on number of batches to consume (useful for streaming loaders).
 
     Returns:
-        np.ndarray of shape (n_classes,) with mean-normalized weights.
+        weights: np.ndarray of shape (n_classes,) with mean-normalized weights.
+        counts: np.ndarray of shape (n_classes,) with raw counts.
     """
     counts = np.zeros((n_classes,), dtype=np.float64)
 
@@ -69,6 +71,8 @@ def compute_class_weights(
     weights[counts == 0] = 0
     positive = weights[counts > 0]
     weights = weights / positive.mean()
+    if return_counts:
+        return weights, counts
     return weights
 
 
