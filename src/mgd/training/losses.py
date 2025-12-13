@@ -47,6 +47,8 @@ def masked_mse(
     target: GraphLatent,
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
+    node_weight: jnp.ndarray | None = None,
+    edge_weight: jnp.ndarray | None = None,
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Mean squared error over valid nodes and edges.
 
@@ -58,6 +60,10 @@ def masked_mse(
     """
     node_w = node_mask[..., None]
     edge_w = pair_mask[..., None]
+    if node_weight is not None:
+        node_w = node_w * node_weight[..., None, None]  # (B, N, 1)
+    if edge_weight is not None:
+        edge_w = edge_w * edge_weight[..., None, None, None]  # (B, N, N, 1)
 
     node_err = jnp.square(pred.node - target.node) * node_w
     edge_err = jnp.square(pred.edge - target.edge) * edge_w
@@ -127,6 +133,7 @@ def _bond_reconstruction_loss(
     mask: jnp.ndarray,
     existence_weights: jnp.ndarray | None = None,
     bond_type_weights: jnp.ndarray | None = None,
+    type_loss_scale: float = 1.0,
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Two-head bond loss: existence (binary) + type (categorical).
 
@@ -138,17 +145,17 @@ def _bond_reconstruction_loss(
     mask = mask.astype(jnp.float32)
     valid_edges = jnp.maximum(mask.sum(axis=(1, 2)), 1.0)
 
-    # Existence: sigmoid BCE on a single logit per edge.
+    # sigmoid BCE on a single logit per edge.
     exist_loss = optax.sigmoid_binary_cross_entropy(exist_logits, exists_label)
     exist_loss = _apply_weights(exist_loss, exists_label.astype(jnp.int32), existence_weights)
     exist_loss = (exist_loss * mask).sum(axis=(1, 2)) / valid_edges
 
-    # Type: categorical CE on edges that exist.
+    # categorical CE on edges that exist.
     type_loss = optax.softmax_cross_entropy_with_integer_labels(type_logits, type_label)
     type_loss = _apply_weights(type_loss, type_label, bond_type_weights)
     type_loss = (type_loss * exists_label * mask).sum(axis=(1, 2)) / valid_edges
 
-    total = exist_loss + type_loss
+    total = exist_loss + type_loss_scale * type_loss
     loss = total.mean()
 
     metrics = {
@@ -165,6 +172,7 @@ def bond_reconstruction_loss(
     mask: jnp.ndarray,
     existence_weights: jnp.ndarray | None = None,
     bond_type_weights: jnp.ndarray | None = None,
+    type_loss_scale: float = 1.0,
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Bond loss where logits pack existence (channel 0) and type (rest).
 
@@ -187,6 +195,7 @@ def bond_reconstruction_loss(
         mask,
         existence_weights=existence_weights,
         bond_type_weights=bond_type_weights,
+        type_loss_scale=type_loss_scale,
     )
 
 __all__ = [

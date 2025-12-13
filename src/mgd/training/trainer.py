@@ -10,6 +10,8 @@ import jax.numpy as jnp
 from mgd.dataset.utils import GraphBatch
 from mgd.training.checkpoints import restore_checkpoint, save_checkpoint
 from mgd.training.train_step import DiffusionTrainState, train_step
+from mgd.training.losses import masked_mse
+from mgd.utils.logging import Logger
 
 from tqdm import tqdm
 
@@ -27,12 +29,28 @@ def train_loop(
     *,
     n_steps: int,
     rng: jax.Array,
-    log_every: int = 0,
-    ckpt_dir: str | None = None,
-    ckpt_every: int | None = None,
+    logger: Logger,
+    loss_fn=masked_mse,
+    loss_kwargs: dict | None = None,
+    use_p2: bool = False,
+    p2_exponent: float = 0.5,
 ) -> Tuple[DiffusionTrainState, List[Dict[str, jnp.ndarray]]]:
-    """Step-based training loop (streaming over the loader as needed)."""
-    step_fn = jax.jit(train_step)
+    """Step-based training loop (streaming over the loader as needed).
+
+    A ``Logger`` must be provided; its settings control logging and checkpoints.
+    """
+    loss_kwargs = loss_kwargs or {}
+    step_fn = jax.jit(
+        lambda st, b, r: train_step(
+            st,
+            b,
+            r,
+            loss_fn=loss_fn,
+            loss_kwargs=loss_kwargs,
+            use_p2=use_p2,
+            p2_exponent=p2_exponent,
+        )
+    )
     history: List[Dict[str, jnp.ndarray]] = []
 
     metrics_buffer: List[Dict[str, jnp.ndarray]] = []
@@ -45,19 +63,19 @@ def train_loop(
             state, metrics = step_fn(state, batch, step_rng)
             metrics_buffer.append(metrics)
             pbar.update(1)
-            if log_every and (step % log_every == 0):
+            if logger.log_every and (step % logger.log_every == 0):
                 loss_val = float(metrics["loss"])
                 pbar.set_postfix(loss=f"{loss_val:.4f}")
-                history.append(_mean_metrics(metrics_buffer))
+            if logger.maybe_log(step, metrics_buffer):
+                history.append(logger.data[-1])
                 metrics_buffer = []
-
-            if ckpt_dir and ckpt_every and (step % ckpt_every == 0):
-                save_checkpoint(ckpt_dir, state, step=step)
+            logger.maybe_checkpoint(step, state)
 
     if metrics_buffer:
         history.append(_mean_metrics(metrics_buffer))
+        logger.data.append(history[-1])
 
     return state, history
 
 
-__all__ = ["train_loop", "restore_checkpoint", "save_checkpoint"]
+__all__ = ["train_loop", "restore_checkpoint", "save_checkpoint", "Logger"]
