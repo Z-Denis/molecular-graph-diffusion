@@ -64,8 +64,9 @@ def train_loop(
             metrics_buffer.append(metrics)
             pbar.update(1)
             if logger.log_every and (step % logger.log_every == 0):
-                loss_val = float(metrics["loss"])
-                pbar.set_postfix(loss=f"{loss_val:.4f}")
+                # Show all recorded metrics in the progress bar
+                postfix = {k: f"{float(v):.4f}" for k, v in metrics.items()}
+                pbar.set_postfix(**postfix)
             if logger.maybe_log(step, metrics_buffer):
                 history.append(logger.data[-1])
                 metrics_buffer = []
