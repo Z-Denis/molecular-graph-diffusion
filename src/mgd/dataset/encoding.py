@@ -15,7 +15,7 @@ from rdkit import Chem
 from mgd.dataset.utils import GraphBatch
 
 MAX_NODES = 29
-DEFAULT_DKNN_K = 4
+DEFAULT_DKNN_K = 5
 DEFAULT_DKNN_ALPHA = 5.0
 
 ATOM_TYPES = ["H", "C", "N", "O", "F"]
