@@ -65,7 +65,8 @@ class EdgeCategoricalDecoder(nn.Module):
             param_dtype=self.param_dtype,
         )
         head = nn.Dense(
-            self.n_categories, param_dtype=self.param_dtype, bias_init=self.bond_bias_init
+            self.n_categories, param_dtype=self.param_dtype, bias_init=self.bond_bias_init, 
+            # kernel_init=nn.initializers.variance_scaling(1.0, "fan_in", "normal"),
             )
 
         h = ln(edge_latent)
