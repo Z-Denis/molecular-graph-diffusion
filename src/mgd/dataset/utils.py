@@ -14,7 +14,8 @@ class GraphBatch:
     atom_type: jnp.ndarray
     hybrid: jnp.ndarray
     cont: jnp.ndarray
-    edges: jnp.ndarray  # TODO: name it more consistently e.g. bond_type
+    bond_type: jnp.ndarray
+    dknn: jnp.ndarray
     node_mask: jnp.ndarray
     pair_mask: jnp.ndarray
 
@@ -24,7 +25,8 @@ class GraphBatch:
             atom_type=jax.lax.stop_gradient(self.atom_type),
             hybrid=jax.lax.stop_gradient(self.hybrid),
             cont=jax.lax.stop_gradient(self.cont),
-            edges=jax.lax.stop_gradient(self.edges),
+            bond_type=jax.lax.stop_gradient(self.bond_type),
+            dknn=jax.lax.stop_gradient(self.dknn),
             node_mask=jax.lax.stop_gradient(self.node_mask),
             pair_mask=jax.lax.stop_gradient(self.pair_mask),
         )

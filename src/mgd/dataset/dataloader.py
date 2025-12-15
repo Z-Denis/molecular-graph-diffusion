@@ -19,8 +19,9 @@ class GraphBatchLoader:
         indices: 1D array of indices for this split.
         batch_size: Number of samples per batch.
         key: PRNGKey for shuffling.
-        shuffle: Whether to shuffle each epoch.
-        drop_last: Drop final partial batch if it is smaller than batch_size.
+        shuffle: Whether to shuffle each pass.
+        stop_gradient: If True, stop gradients on batch tensors.
+        n_batches: Optional finite number of batches to yield; None for infinite stream.
 
     Example:
         >>> import jax, numpy as np
@@ -39,10 +40,18 @@ class GraphBatchLoader:
         batch_size: int,
         key: jax.Array,
         shuffle: bool = True,
-        drop_last: bool = False,
         stop_gradient: bool = True,
+        n_batches: int | None = None,
     ) -> None:
-        required = ["atom_ids", "hybrid_ids", "node_continuous", "edge_types", "node_mask", "pair_mask"]
+        required = [
+            "atom_ids",
+            "hybrid_ids",
+            "node_continuous",
+            "bond_types",
+            "dknn",
+            "node_mask",
+            "pair_mask",
+        ]
         missing = [k for k in required if k not in data]
         if missing:
             raise KeyError(f"Missing required keys in data: {missing}. Provided keys: {list(data.keys())}")
@@ -50,9 +59,9 @@ class GraphBatchLoader:
         self.indices = jnp.asarray(indices)
         self.batch_size = int(batch_size)
         self.shuffle = shuffle
-        self.drop_last = drop_last
         self._key = key
         self._stop_gradient = stop_gradient
+        self._n_batches = n_batches
         
         for name, arr in self.data.items():
             if arr.shape[0] <= int(self.indices.max()):
@@ -62,10 +71,10 @@ class GraphBatchLoader:
         
 
     def __len__(self) -> int:
-        """Number of batches per epoch (ceil unless drop_last)."""
+        """Approximate number of batches per pass (or the fixed limit if set)."""
+        if self._n_batches is not None:
+            return self._n_batches
         n = self.indices.shape[0]
-        if self.drop_last:
-            return n // self.batch_size
         return (n + self.batch_size - 1) // self.batch_size
 
     def _ordered_indices(self) -> jnp.ndarray:
@@ -76,18 +85,22 @@ class GraphBatchLoader:
         return self.indices[order]
 
     def __iter__(self) -> Iterator[GraphBatch]:
-        idx = self._ordered_indices()
-        n = idx.shape[0]
-        for start in range(0, n, self.batch_size):
-            end = start + self.batch_size
-            if end > n and self.drop_last:
-                break
-            batch_idx = idx[start:end]
-            batch = {name: arr[batch_idx] for name, arr in self.data.items()}
-            graph = _to_graph_batch(batch)
-            if self._stop_gradient:
-                graph = graph.stop_gradient()
-            yield graph
+        """Yield batches indefinitely, reshuffling indices each pass if enabled."""
+        yielded = 0
+        while self._n_batches is None or yielded < self._n_batches:
+            idx = self._ordered_indices()
+            n = idx.shape[0]
+            for start in range(0, n, self.batch_size):
+                if self._n_batches is not None and yielded >= self._n_batches:
+                    break
+                end = start + self.batch_size
+                batch_idx = idx[start:end]
+                batch = {name: arr[batch_idx] for name, arr in self.data.items()}
+                graph = _to_graph_batch(batch)
+                if self._stop_gradient:
+                    graph = graph.stop_gradient()
+                yield graph
+                yielded += 1
 
 
 def _to_graph_batch(batch: Dict[str, jnp.ndarray]) -> GraphBatch:
@@ -95,7 +108,8 @@ def _to_graph_batch(batch: Dict[str, jnp.ndarray]) -> GraphBatch:
         atom_type=batch["atom_ids"],
         hybrid=batch["hybrid_ids"],
         cont=batch["node_continuous"],
-        edges=batch["edge_types"],
+        bond_type=batch["bond_types"],
+        dknn=batch["dknn"],
         node_mask=batch["node_mask"],
         pair_mask=batch["pair_mask"],
     )

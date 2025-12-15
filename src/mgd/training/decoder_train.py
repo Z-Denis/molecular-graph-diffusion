@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
-
-from functools import partial
+from typing import Callable, Dict, Optional, Tuple
 
 import flax
 import jax
@@ -13,7 +11,9 @@ import optax
 from flax.training import train_state
 
 from mgd.training.losses import masked_cross_entropy
+from mgd.utils.logging import Logger
 from .train_step import DiffusionTrainState
+from tqdm import tqdm
 
 class DecoderTrainState(train_state.TrainState):
     """Train state carrying the decoder module reference."""
@@ -49,25 +49,18 @@ def decoder_train_step(
     targets: jnp.ndarray,
     mask: jnp.ndarray,
     *,
-    model_kwargs: Optional[Dict] = None,
-    class_weights: Optional[jnp.ndarray] = None,
-    label_smoothing: Optional[float] = None,
+    loss_fn: Callable = masked_cross_entropy,
+    loss_kwargs: Optional[Dict] = None,
 ) -> Tuple[DecoderTrainState, Dict[str, jnp.ndarray]]:
-    """One optimization step for a decoder with masked cross-entropy."""
-    model_kwargs = model_kwargs or {}
+    """One optimization step for a decoder with a configurable loss."""
+    loss_kwargs = loss_kwargs or {}
 
-    def loss_fn(params):
-        logits = state.model.apply({"params": params}, latents, **model_kwargs)
-        loss, metrics = masked_cross_entropy(
-            logits,
-            targets,
-            mask,
-            class_weights=class_weights,
-            use_label_smoothing=label_smoothing,
-        )
+    def _loss(params):
+        logits = state.model.apply({"params": params}, latents)
+        loss, metrics = loss_fn(logits, targets, mask, **loss_kwargs)
         return loss, metrics
 
-    (loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
+    (loss, metrics), grads = jax.value_and_grad(_loss, has_aux=True)(state.params)
     state = state.apply_gradients(grads=grads)
     metrics = {"loss": loss, **metrics}
     return state, metrics
@@ -77,21 +70,21 @@ def decoder_train_loop(
     diffusion_state: DiffusionTrainState,
     decoder_state: DecoderTrainState,
     loader,
-    num_epochs: int,
-    log_every: int = 0,
-    ckpt_dir: str | None = None,
-    ckpt_every: int | None = None,
-    class_weights: Optional[jnp.ndarray] = None,
-    label_smoothing: Optional[float] = None,
+    *,
+    n_steps: int,
     feature_type: str = "node",
+    loss_fn: Callable = masked_cross_entropy,
+    loss_kwargs: Optional[Dict] = None,
+    logger: Logger,
 ):
-    """Epoch-based training loop for decoders.
+    """Step-based training loop for decoders.
 
     ``loader`` is expected to yield GraphBatch.
     feature_type: "node" (uses atom_type/node_mask) or "edge" (uses edges/pair_mask).
+    ``loss_fn`` must follow the signature ``loss_fn(logits, targets, mask, **kwargs)``.
+    A ``Logger`` must be provided; it controls logging and checkpoints.
     """
     from mgd.training.checkpoints import save_checkpoint  # local import to avoid cycles
-    from tqdm import tqdm
 
     def _mean_metrics(history):
         if not history:
@@ -99,12 +92,25 @@ def decoder_train_loop(
         stacked = {k: jnp.stack([m[k] for m in history]) for k in history[0]}
         return {k: v.mean() for k, v in stacked.items()}
 
-    step_fn = jax.jit(decoder_train_step, static_argnames=("label_smoothing",))
-    ls_value = label_smoothing
+    loss_kwargs = loss_kwargs or {}
+    step_fn = jax.jit(
+        lambda st, l, y, m: decoder_train_step(
+            st,
+            l,
+            y,
+            m,
+            loss_fn=loss_fn,
+            loss_kwargs=loss_kwargs,
+        ),
+        static_argnames=(),
+    )
     history = []
-    for epoch in tqdm(range(num_epochs)):
-        epoch_metrics = []
-        for step, batch in enumerate(loader):
+    metrics_buffer = []
+    loader_iter = iter(loader)
+
+    with tqdm(total=n_steps) as pbar:
+        for step in range(1, n_steps + 1):
+            batch = next(loader_iter)
             latents_full = diffusion_state.encode(batch)  # GraphLatent, frozen backbone
             if feature_type == "node":
                 latents = latents_full.node
@@ -121,16 +127,19 @@ def decoder_train_loop(
                 latents,
                 targets,
                 mask,
-                class_weights=class_weights,
-                label_smoothing=ls_value,
             )
-            epoch_metrics.append(metrics)
-            if log_every and (step + 1) % log_every == 0:
-                print(f"epoch {epoch+1} step {step+1}: loss={float(metrics['loss']):.4f}")
-        mean_metrics = _mean_metrics(epoch_metrics)
-        history.append(mean_metrics)
-        if ckpt_dir and ckpt_every and (epoch + 1) % ckpt_every == 0:
-            save_checkpoint(ckpt_dir, decoder_state, step=epoch + 1)
+            metrics_buffer.append(metrics)
+            pbar.update(1)
+            if logger.log_every and (step % logger.log_every == 0):
+                loss_val = float(metrics["loss"])
+                pbar.set_postfix(loss=f"{loss_val:.4f}")
+            if logger.maybe_log(step, metrics_buffer):
+                history.append(logger.data[-1])
+                metrics_buffer = []
+            logger.maybe_checkpoint(step, decoder_state)
+    if metrics_buffer:
+        history.append(_mean_metrics(metrics_buffer))
+        logger.data.append(history[-1])
     return decoder_state, history
 
 

@@ -65,24 +65,46 @@ def train_step(
     state: DiffusionTrainState,
     batch: GraphBatch,
     rng: jax.Array,
+    *,
+    loss_fn=masked_mse,
+    loss_kwargs: dict | None = None,
+    use_p2: bool = False,
+    p2_exponent: float = 0.5,
 ) -> Tuple[DiffusionTrainState, dict]:
-    """One optimization step with noise prediction loss."""
-    num_steps = state.model.schedule.betas.shape[0]
+    """One optimization step with noise prediction loss.
 
-    def loss_fn(params):
+    If ``use_p2`` is True, applies SNR-based p2 weighting (as in Imagen/DDPM++) with
+    weight = (SNR / (SNR + 1)) ** p2_exponent.
+    """
+    num_steps = state.model.schedule.betas.shape[0]
+    loss_kwargs = loss_kwargs or {}
+
+    def loss_inner(params):
         rng_t, rng_noise = jax.random.split(rng)
         t = jax.random.randint(rng_t, shape=(batch.atom_type.shape[0],), minval=0, maxval=num_steps)
         outputs = state.model.apply({"params": params}, batch, t, rngs={"noise": rng_noise})
-        loss, parts = masked_mse(
+        if use_p2:
+            snr_t = state.model.schedule.snr(t)
+            weight = (snr_t / (snr_t + 1.0)) ** p2_exponent
+            node_w = weight
+            edge_w = weight
+        else:
+            node_w = None
+            edge_w = None
+
+        loss, parts = loss_fn(
             outputs["eps_pred"],
             outputs["noise"],
             batch.node_mask,
             batch.pair_mask,
+            node_weight=node_w,
+            edge_weight=edge_w,
+            **loss_kwargs,
         )
         parts["t_mean"] = jnp.mean(t)
         return loss, parts
 
-    (loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
+    (loss, metrics), grads = jax.value_and_grad(loss_inner, has_aux=True)(state.params)
     state = state.apply_gradients(grads=grads)
     metrics = {"loss": loss, **metrics}
     return state, metrics

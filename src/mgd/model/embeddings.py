@@ -29,10 +29,13 @@ class NodeEmbedder(nn.Module):
 
     atom_vocab: int
     hybrid_vocab: int
+
     atom_embed_dim: int
     hybrid_embed_dim: int
     cont_embed_dim: int
+
     hidden_dim: int
+    
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     scale: float = 1.0
     param_dtype: DTypeLike = "float32"
@@ -78,21 +81,31 @@ class NodeEmbedder(nn.Module):
         return self.scale * h
 
 
-class EdgeEmbedder(nn.Module):
-    """Embed bond categorical features into a shared hidden space (no mask!)."""
+class PairEmbedder(nn.Module):
+    """Embed bond categorical + continuous features into a shared hidden space (no mask!)."""
 
-    edge_vocab: int
-    edge_embed_dim: int
+    bond_vocab: int
+
+    bond_embed_dim: int
+    bond_cont_dim: int
+    
     hidden_dim: int
+
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     scale: float = 1.0
     param_dtype: DTypeLike = "float32"
 
     @nn.compact
-    def __call__(self, edge_types: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, bond_types: jnp.ndarray, bond_cont: jnp.ndarray | None = None) -> jnp.ndarray:
         """Returns (batch, n_atoms, n_atoms, hidden_dim)."""
-        emb = nn.Embed(self.edge_vocab, self.edge_embed_dim, name="edge_embedding", param_dtype=self.param_dtype)(edge_types)
-        h = nn.Dense(self.hidden_dim, name="fuse", param_dtype=self.param_dtype)(emb)
+        emb = nn.Embed(self.bond_vocab, self.bond_embed_dim, name="bond_embedding", param_dtype=self.param_dtype)(bond_types)
+        proj = nn.Dense(
+            self.bond_cont_dim or self.bond_embed_dim,
+            name="pair_cont_projection",
+            param_dtype=self.param_dtype,
+        )(bond_cont)
+        h = jnp.concatenate([emb, proj], axis=-1)
+        h = nn.Dense(self.hidden_dim, name="fuse", param_dtype=self.param_dtype)(h)
         h = self.activation(h)
         h = nn.Dense(
             self.hidden_dim,
@@ -158,12 +171,14 @@ class GraphEmbedder(nn.Module):
     
     atom_embed_dim: int
     hybrid_embed_dim: int
-    cont_embed_dim: int
-    edge_embed_dim: int    # embed dim for edges
+    atom_cont_embed_dim: int
+    
+    bond_embed_dim: int
+    bond_cont_embed_dim: int
 
     atom_vocab_dim: int = ATOM_VOCAB_SIZE
     hybrid_vocab_dim: int = HYBRID_VOCAB_SIZE
-    edge_vocab_dim: int = BOND_VOCAB_SIZE
+    bond_vocab_dim: int = BOND_VOCAB_SIZE
 
     node_scale: float = 1.0
     edge_scale: float = 1.0
@@ -183,18 +198,19 @@ class GraphEmbedder(nn.Module):
             self.hybrid_vocab_dim,
             self.atom_embed_dim,
             self.hybrid_embed_dim,
-            self.cont_embed_dim,
+            self.atom_cont_embed_dim,
             self.space.node_dim,
             self.activation,
             param_dtype=self.param_dtype,
             scale=self.node_scale,
             name="node_embedding",
         )
-        edge_emb = EdgeEmbedder(
-            self.edge_vocab_dim,
-            self.edge_embed_dim,
-            self.space.edge_dim,
-            self.activation,
+        edge_emb = PairEmbedder(
+            bond_vocab=self.bond_vocab_dim,
+            bond_embed_dim=self.bond_embed_dim,
+            bond_cont_dim=self.bond_cont_embed_dim,
+            hidden_dim=self.space.edge_dim,
+            activation=self.activation,
             param_dtype=self.param_dtype,
             scale=self.edge_scale,
             name="edge_embedding",
@@ -205,9 +221,9 @@ class GraphEmbedder(nn.Module):
             graph.hybrid,
             graph.cont,
         )
-        edges = edge_emb(graph.edges)
+        edges = edge_emb(graph.bond_type, graph.dknn)
 
         return GraphLatent(nodes, edges).masked(node_mask, pair_mask)
 
 
-__all__ = ["NodeEmbedder", "EdgeEmbedder", "GraphEmbedder", "sinusoidal_time_embedding", "TimeEmbedding"]
+__all__ = ["NodeEmbedder", "PairEmbedder", "GraphEmbedder", "sinusoidal_time_embedding", "TimeEmbedding"]

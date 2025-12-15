@@ -95,4 +95,38 @@ def aggregate_node_edge(
     return reducer(parts)
 
 
-__all__ = ["MLP", "aggregate_node_edge"]
+def bond_bias_initializer(p_exist: float, p_types: Sequence[float] | None = None, eps: float = 1e-6) -> Callable:
+    """Initializer for decoder visible layer bias using empirical bond probabilities.
+
+    The bias vector is:
+        [logit(p_exist), log(p_single), log(p_double), log(p_triple), log(p_aromatic), ...]
+    where ``p_types`` provides the per-type probabilities (already normalized as you prefer).
+    If ``p_types`` is None, type logits are initialized to zeros.
+    """
+    p_exist = jnp.clip(p_exist, eps, 1.0 - eps)
+    exist_bias = jnp.log(p_exist) - jnp.log1p(-p_exist)
+
+    if p_types is None:
+        def init(key, shape, dtype=jnp.float32):
+            if shape[0] < 1:
+                raise ValueError(f"bond_bias_initializer expected shape >=1, got {shape}")
+            bias = jnp.zeros(shape, dtype=dtype).at[0].set(exist_bias.astype(dtype))
+            return bias
+        return init
+    
+    p_types_arr = jnp.asarray(p_types, dtype=jnp.float32)
+    p_types_arr = jnp.clip(p_types_arr, eps, 1.0)
+    type_bias = jnp.log(p_types_arr)
+
+    bias_vec = jnp.concatenate([jnp.array([exist_bias], dtype=jnp.float32), type_bias])
+    expected_shape = (bias_vec.shape[0],)
+
+    def init(key, shape, dtype=jnp.float32):
+        if tuple(shape) != expected_shape:
+            raise ValueError(f"bond_bias_initializer expected shape {expected_shape}, got {shape}")
+        return bias_vec.astype(dtype)
+
+    return init
+
+
+__all__ = ["MLP", "aggregate_node_edge", "bond_bias_initializer"]

@@ -46,6 +46,7 @@ class DDPMUpdater(BaseUpdater):
         beta_t = jnp.take(self.schedule.betas, t)
         alpha_t = jnp.take(self.schedule.alphas, t)
         alpha_bar_t = jnp.take(self.schedule.alpha_bar, t)
+        alpha_bar_prev = jnp.take(self.schedule.alpha_bar, jnp.maximum(t - 1, 0))
 
         coef1 = 1.0 / jnp.sqrt(alpha_t)
         coef2 = beta_t / jnp.sqrt(1.0 - alpha_bar_t)
@@ -54,7 +55,9 @@ class DDPMUpdater(BaseUpdater):
         coef2_latent = latent_from_scalar(coef2)
         mean = coef1_latent * (xt - coef2_latent * eps_pred)
 
-        sigma = jnp.where(t > 0, jnp.sqrt(beta_t), jnp.zeros_like(beta_t))
+        # Use posterior variance beta_tilde (Ho et al. 2020)
+        beta_tilde = beta_t * (1.0 - alpha_bar_prev) / jnp.maximum(1.0 - alpha_bar_t, 1e-8)
+        sigma = jnp.where(t > 0, jnp.sqrt(beta_tilde), jnp.zeros_like(beta_t))
         sigma_latent = latent_from_scalar(sigma)
 
         rng_n, rng_e = jax.random.split(rng)

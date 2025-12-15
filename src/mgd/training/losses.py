@@ -11,11 +11,44 @@ import jax
 from mgd.latent import GraphLatent
 
 
+def _apply_weights(
+    loss: jnp.ndarray, labels: jnp.ndarray, weights: jnp.ndarray | None
+) -> jnp.ndarray:
+    """Optionally reweight losses per class/label."""
+    if weights is None:
+        return loss
+    w = jnp.take(weights, labels)
+    return w * loss
+
+
+def _apply_mask_mean(loss: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
+    """Apply mask and normalize by the number of valid entries."""
+    masked = loss * mask
+    return masked.sum() / jnp.maximum(mask.sum(), 1.0)
+
+
+def _softmax_ce(
+    logits: jnp.ndarray, targets: jnp.ndarray, label_smoothing: float | None
+) -> jnp.ndarray:
+    """Cross-entropy with optional label smoothing."""
+    if label_smoothing is None:
+        return optax.softmax_cross_entropy_with_integer_labels(logits, targets)
+    if not (0.0 <= label_smoothing < 1.0):
+        raise ValueError("label_smoothing must be in [0, 1).")
+    n_classes = logits.shape[-1]
+    one_hot = jax.nn.one_hot(targets, n_classes)
+    smooth = label_smoothing / n_classes
+    target_probs = (1.0 - label_smoothing) * one_hot + smooth
+    return optax.softmax_cross_entropy(logits, target_probs)
+
+
 def masked_mse(
     pred: GraphLatent,
     target: GraphLatent,
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
+    node_weight: jnp.ndarray | None = None,
+    edge_weight: jnp.ndarray | None = None,
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Mean squared error over valid nodes and edges.
 
@@ -27,6 +60,10 @@ def masked_mse(
     """
     node_w = node_mask[..., None]
     edge_w = pair_mask[..., None]
+    if node_weight is not None:
+        node_w = node_w * node_weight[..., None, None]  # (B, N, 1)
+    if edge_weight is not None:
+        edge_w = edge_w * edge_weight[..., None, None, None]  # (B, N, N, 1)
 
     node_err = jnp.square(pred.node - target.node) * node_w
     edge_err = jnp.square(pred.edge - target.edge) * edge_w
@@ -82,22 +119,88 @@ def masked_cross_entropy(
         L = sum m * CE(logits, y) / sum m
     where CE is softmax cross-entropy and m is the provided mask.
     """
-    if use_label_smoothing is not None:
-        if not (0.0 <= use_label_smoothing < 1.0):
-            raise ValueError("use_label_smoothing must be in [0, 1).")
-        n_classes = logits.shape[-1]
-        one_hot = jax.nn.one_hot(targets, n_classes)
-        smooth = use_label_smoothing / n_classes
-        target_probs = (1.0 - use_label_smoothing) * one_hot + smooth
-        ce = optax.softmax_cross_entropy(logits, target_probs)
-    else:
-        ce = optax.softmax_cross_entropy_with_integer_labels(logits, targets)
-    if class_weights is not None:
-        weights = jnp.take(class_weights, targets)
-        ce = weights * ce
-    masked = ce * mask
-    loss = masked.sum() / jnp.maximum(mask.sum(), 1.0)
+    ce = _softmax_ce(logits, targets, use_label_smoothing)
+    ce = _apply_weights(ce, targets, class_weights)
+    loss = _apply_mask_mean(ce, mask)
     return loss, {"loss": loss}
 
 
-__all__ = ["masked_mse", "masked_cosine_similarity", "masked_cross_entropy"]
+def _bond_reconstruction_loss(
+    exist_logits: jnp.ndarray,
+    type_logits: jnp.ndarray,
+    exists_label: jnp.ndarray,
+    type_label: jnp.ndarray,
+    mask: jnp.ndarray,
+    existence_weights: jnp.ndarray | None = None,
+    bond_type_weights: jnp.ndarray | None = None,
+    type_loss_scale: float = 1.0,
+) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    """Two-head bond loss: existence (binary) + type (categorical).
+
+    Existence loss is applied to all masked edges. Type loss is only applied
+    where a bond exists (``exists_label==1``) and is also masked.
+    Both terms are normalized per-molecule by the number of valid edges and
+    averaged over the batch.
+    """
+    mask = mask.astype(jnp.float32)
+    valid_edges = jnp.maximum(mask.sum(axis=(1, 2)), 1.0)
+
+    # sigmoid BCE on a single logit per edge.
+    exist_loss = optax.sigmoid_binary_cross_entropy(exist_logits, exists_label)
+    exist_loss = _apply_weights(exist_loss, exists_label.astype(jnp.int32), existence_weights)
+    exist_loss = (exist_loss * mask).sum(axis=(1, 2)) / valid_edges
+
+    # categorical CE on edges that exist.
+    type_loss = optax.softmax_cross_entropy_with_integer_labels(type_logits, type_label)
+    type_loss = _apply_weights(type_loss, type_label, bond_type_weights)
+    type_loss = (type_loss * exists_label * mask).sum(axis=(1, 2)) / valid_edges
+
+    total = exist_loss + type_loss_scale * type_loss
+    loss = total.mean()
+
+    metrics = {
+        "loss": loss,
+        "loss_exist": exist_loss.mean(),
+        "loss_type": type_loss.mean(),
+    }
+    return loss, metrics
+
+
+def bond_reconstruction_loss(
+    logits: jnp.ndarray,
+    type_label: jnp.ndarray,
+    mask: jnp.ndarray,
+    existence_weights: jnp.ndarray | None = None,
+    bond_type_weights: jnp.ndarray | None = None,
+    type_loss_scale: float = 1.0,
+) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    """Bond loss where logits pack existence (channel 0) and type (rest).
+
+    Parameters follow the decoder output:
+        logits: [..., 1 + n_types] where channel 0 is the existence logit.
+        type_label: integer bond-type labels (0 means no bond).
+        mask: pair mask for valid edges.
+    Existence labels are inferred as ``type_label != 0``.
+    """
+    if logits.shape[-1] < 2:
+        raise ValueError("Concatenated logits must have at least 2 channels.")
+    exist_logits = logits[..., 0]
+    type_logits = logits[..., 1:]
+    exists_label = (type_label != 0).astype(jnp.float32)
+    return _bond_reconstruction_loss(
+        exist_logits,
+        type_logits,
+        exists_label,
+        type_label,
+        mask,
+        existence_weights=existence_weights,
+        bond_type_weights=bond_type_weights,
+        type_loss_scale=type_loss_scale,
+    )
+
+__all__ = [
+    "masked_mse",
+    "masked_cosine_similarity",
+    "masked_cross_entropy",
+    "bond_reconstruction_loss",
+]

@@ -15,6 +15,8 @@ from rdkit import Chem
 from mgd.dataset.utils import GraphBatch
 
 MAX_NODES = 29
+DEFAULT_DKNN_K = 5
+DEFAULT_DKNN_ALPHA = 5.0
 
 ATOM_TYPES = ["H", "C", "N", "O", "F"]
 HYBRIDIZATIONS = [
@@ -49,20 +51,70 @@ HYBRID_VOCAB_SIZE = len(HYBRIDIZATIONS) + 1
 BOND_VOCAB_SIZE = max(BOND_TO_ID.values()) + 1
 
 
-def _one_hot_from_ids(ids: np.ndarray, depth: int, dtype: DTypeLike, zero_as_unknown: bool = True) -> np.ndarray:
-    out = np.zeros(ids.shape + (depth,), dtype=dtype)
-    flat_idx = ids.reshape(-1)
-    mask = flat_idx > 0 if zero_as_unknown else flat_idx >= 0
-    rows = np.nonzero(mask)[0]
-    cols = flat_idx[mask]
-    out.reshape(-1, depth)[rows, cols] = 1.0
-    return out
+def compute_dknn(
+    coords: np.ndarray,
+    atom_mask: np.ndarray,
+    *,
+    k_max: int,
+    alpha: float,
+    symmetrize: bool = True,
+) -> np.ndarray:
+    """Compute multi-scale soft kNN distance features."""
+    coords = np.asarray(coords)
+    atom_mask = np.asarray(atom_mask).astype(bool)
+
+    B, N, _ = coords.shape
+    k_eff = max(0, min(k_max, N - 1))
+
+    pair_mask = atom_mask[:, :, None] & atom_mask[:, None, :]
+
+    # Pairwise distances
+    diff = coords[:, :, None, :] - coords[:, None, :, :]
+    dist = np.linalg.norm(diff, axis=-1)
+
+    # Invalidate padded atoms and diagonal
+    large = 1e5
+    dist = np.where(pair_mask, dist, large)
+    dist = dist + np.eye(N)[None] * large
+
+    # Count valid neighbors per atom
+    num_neighbors = pair_mask.sum(axis=-1) - 1  # exclude self
+
+    dknn = np.zeros((B, N, N, k_max), dtype=coords.dtype)
+
+    for k in range(1, k_eff + 1):
+        dk = np.partition(dist, kth=k - 1, axis=-1)[..., k - 1]
+
+        valid_k = num_neighbors >= k  # (B, N)
+
+        delta = np.maximum(dist - dk[..., None], 0.0)
+        feat = np.exp(-alpha * delta)
+
+        # Zero out atoms without enough neighbors
+        feat *= valid_k[..., None]
+
+        if symmetrize:
+            feat = np.maximum(feat, feat.transpose(0, 2, 1))
+
+        dknn[..., k - 1] = feat
+
+    # Final masking
+    dknn *= pair_mask[..., None]
+    dknn *= (1.0 - np.eye(N)[None, :, :, None])
+
+    return dknn
 
 
 def featurize_components(
-    mol: Chem.Mol, dtype: DTypeLike = "float32"
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return categorical ids, continuous scalars, and masks for a single molecule."""
+    mol: Chem.Mol,
+    dtype: DTypeLike = "float32",
+    *,
+    dknn_k: int = DEFAULT_DKNN_K,
+    dknn_alpha: float = DEFAULT_DKNN_ALPHA,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return categorical ids, continuous scalars, edge types, dknn, and masks for a single molecule."""
+    if mol.GetNumConformers() == 0:
+        raise ValueError("Molecule has no conformers; cannot compute coordinates for dknn.")
     mol = Chem.AddHs(mol, addCoords=False)
     n_atoms = mol.GetNumAtoms()
     if n_atoms > MAX_NODES:
@@ -71,8 +123,9 @@ def featurize_components(
     atom_ids = np.zeros((MAX_NODES,), dtype=np.int32)
     hybrid_ids = np.zeros((MAX_NODES,), dtype=np.int32)
     node_cont = np.zeros((MAX_NODES, 4), dtype=dtype)  # electronegativity, degree/4, formal_valence/4, aromaticity
-    edge_types = np.zeros((MAX_NODES, MAX_NODES), dtype=np.int32)
+    bond_types = np.zeros((MAX_NODES, MAX_NODES), dtype=np.int32)
     node_mask = np.zeros((MAX_NODES,), dtype=dtype)
+    coords = np.zeros((MAX_NODES, 3), dtype=dtype)
 
     for i, atom in enumerate(mol.GetAtoms()):
         symbol = atom.GetSymbol()
@@ -91,57 +144,46 @@ def featurize_components(
         node_cont[i, 2] = atom.GetFormalCharge() / 4.0
         node_cont[i, 3] = 1.0 if atom.GetIsAromatic() else 0.0
         node_mask[i] = 1.0
+        pos = mol.GetConformer().GetAtomPosition(i)
+        coords[i] = np.array([pos.x, pos.y, pos.z], dtype=dtype)
 
     for i in range(n_atoms):
         for j in range(n_atoms):
             bond = None if i == j else mol.GetBondBetweenAtoms(i, j)
             bond_type = bond.GetBondType() if bond is not None else "no_bond"
-            edge_types[i, j] = BOND_TO_ID.get(bond_type, 0)
+            bond_types[i, j] = BOND_TO_ID.get(bond_type, 0)
 
     pair_mask = node_mask[:, None] * node_mask[None, :]
     # remove self-interactions
     pair_mask = pair_mask * (1.0 - np.eye(MAX_NODES, dtype=dtype))
-    return atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask
-
-
-def build_flat_features(
-    atom_ids: np.ndarray, hybrid_ids: np.ndarray, node_cont: np.ndarray, dtype: DTypeLike
-) -> np.ndarray:
-    """Concatenate categorical one-hots with continuous scalars."""
-    atom_one_hot = _one_hot_from_ids(atom_ids, ATOM_VOCAB_SIZE, dtype)
-    hybrid_one_hot = _one_hot_from_ids(hybrid_ids, HYBRID_VOCAB_SIZE, dtype)
-    return np.concatenate([atom_one_hot, hybrid_one_hot, node_cont], axis=-1)
+    dknn = compute_dknn(coords[None], node_mask[None], k_max=dknn_k, alpha=dknn_alpha)[0]
+    return atom_ids, hybrid_ids, node_cont, bond_types, dknn, node_mask, pair_mask
 
 
 def encode_molecule(
-    mol: Chem.Mol, feature_style: str = "flat", dtype: DTypeLike = "float32", as_batch: bool = False
-) -> Union[Dict[str, np.ndarray], Tuple[GraphBatch, np.ndarray]]:
-    """Encode an RDKit molecule into dense node/edge features.
+    mol: Chem.Mol,
+    *,
+    dtype: DTypeLike = "float32",
+    as_batch: bool = False,
+    dknn_k: int = DEFAULT_DKNN_K,
+    dknn_alpha: float = DEFAULT_DKNN_ALPHA,
+) -> Union[Dict[str, np.ndarray], GraphBatch]:
+    """Encode an RDKit molecule into dense node/edge features (no flat mode).
 
     Example:
         >>> mol = Chem.MolFromSmiles("CCO")
-        >>> features = encode_molecule(mol, feature_style="flat")
+        >>> features = encode_molecule(mol)
     """
-    atom_ids, hybrid_ids, node_cont, edge_types, node_mask, pair_mask = featurize_components(mol, dtype=dtype)
-
-    if feature_style == "flat":
-        nodes = build_flat_features(atom_ids, hybrid_ids, node_cont, dtype=dtype)
-        edge_one_hot = _one_hot_from_ids(edge_types, BOND_VOCAB_SIZE, dtype, zero_as_unknown=False)
-        return {
-            "nodes": nodes.astype(dtype),
-            "edges": edge_one_hot.astype(dtype),
-            "node_mask": node_mask.astype(dtype),
-            "pair_mask": pair_mask.astype(dtype),
-        }
-
-    if feature_style != "separate":
-        raise ValueError(f"feature_style must be 'flat' or 'separate', got {feature_style}")
+    atom_ids, hybrid_ids, node_cont, bond_types, dknn, node_mask, pair_mask = featurize_components(
+        mol, dtype=dtype, dknn_k=dknn_k, dknn_alpha=dknn_alpha
+    )
 
     feats = {
         "atom_ids": atom_ids.astype(np.int32),
         "hybrid_ids": hybrid_ids.astype(np.int32),
         "node_continuous": node_cont.astype(dtype),
-        "edge_types": edge_types.astype(np.int32),
+        "bond_types": bond_types.astype(np.int32),
+        "dknn": dknn.astype(dtype),
         "node_mask": node_mask.astype(dtype),
         "pair_mask": pair_mask.astype(dtype),
     }
@@ -150,7 +192,8 @@ def encode_molecule(
             atom_type=feats["atom_ids"],
             hybrid=feats["hybrid_ids"],
             cont=feats["node_continuous"],
-            edges=feats["edge_types"],
+            bond_type=feats["bond_types"],
+            dknn=feats["dknn"],
             node_mask=feats["node_mask"],
             pair_mask=feats["pair_mask"],
         )
@@ -169,7 +212,9 @@ __all__ = [
     "ATOM_VOCAB_SIZE",
     "HYBRID_VOCAB_SIZE",
     "BOND_VOCAB_SIZE",
+    "DEFAULT_DKNN_K",
+    "DEFAULT_DKNN_ALPHA",
+    "compute_dknn",
     "featurize_components",
-    "build_flat_features",
     "encode_molecule",
 ]
