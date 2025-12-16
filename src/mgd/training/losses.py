@@ -133,6 +133,7 @@ def _bond_reconstruction_loss(
     mask: jnp.ndarray,
     existence_weights: jnp.ndarray | None = None,
     bond_type_weights: jnp.ndarray | None = None,
+    pos_weight: float | None = None,
     type_loss_scale: float = 1.0,
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Two-head bond loss: existence (binary) + type (categorical).
@@ -143,15 +144,30 @@ def _bond_reconstruction_loss(
     averaged over the batch.
     """
     mask = mask.astype(jnp.float32)
-    valid_edges = jnp.maximum(mask.sum(axis=(1, 2)), 1.0)
+    exists_label = exists_label.astype(jnp.float32)
 
+    valid_edges = jnp.maximum(mask.sum(axis=(1, 2)), 1.0)
+    
     # sigmoid BCE on a single logit per edge.
-    exist_loss = optax.sigmoid_binary_cross_entropy(exist_logits, exists_label)
+    exist_loss = optax.sigmoid_binary_cross_entropy(
+        exist_logits, 
+        exists_label,
+        )
+    if pos_weight is not None:
+        pos_weight = jnp.asarray(pos_weight, dtype=exist_loss.dtype)
+        exist_loss = jnp.where(
+            exists_label == 1.0,
+            pos_weight * exist_loss,
+            exist_loss,
+        )
     exist_loss = _apply_weights(exist_loss, exists_label.astype(jnp.int32), existence_weights)
     exist_loss = (exist_loss * mask).sum(axis=(1, 2)) / valid_edges
 
     # categorical CE on edges that exist.
-    type_loss = optax.softmax_cross_entropy_with_integer_labels(type_logits, type_label)
+    type_loss = optax.softmax_cross_entropy_with_integer_labels(
+        type_logits, 
+        type_label,
+        )
     type_loss = _apply_weights(type_loss, type_label, bond_type_weights)
     type_loss = (type_loss * exists_label * mask).sum(axis=(1, 2)) / valid_edges
 
@@ -162,6 +178,7 @@ def _bond_reconstruction_loss(
         "loss": loss,
         "loss_exist": exist_loss.mean(),
         "loss_type": type_loss.mean(),
+        "existence_rate": (mask * exists_label).sum() / valid_edges.sum()
     }
     return loss, metrics
 
@@ -172,6 +189,7 @@ def bond_reconstruction_loss(
     mask: jnp.ndarray,
     existence_weights: jnp.ndarray | None = None,
     bond_type_weights: jnp.ndarray | None = None,
+    pos_weight: float | None = None,
     type_loss_scale: float = 1.0,
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Bond loss where logits pack existence (channel 0) and type (rest).
@@ -187,7 +205,7 @@ def bond_reconstruction_loss(
     exist_logits = logits[..., 0]
     type_logits = logits[..., 1:]
     exists_label = (type_label != 0).astype(jnp.float32)
-    return _bond_reconstruction_loss(
+    loss, metrics = _bond_reconstruction_loss(
         exist_logits,
         type_logits,
         exists_label,
@@ -195,12 +213,136 @@ def bond_reconstruction_loss(
         mask,
         existence_weights=existence_weights,
         bond_type_weights=bond_type_weights,
+        pos_weight=pos_weight,
         type_loss_scale=type_loss_scale,
     )
+
+    # # Precision/recall on existence (using sigmoid > 0.5)
+    # exist_prob = jax.nn.sigmoid(exist_logits)
+    # pred_exist = (exist_prob > 0.2).astype(jnp.float32)
+
+    # mask_f = mask.astype(jnp.float32)
+    # frac_pred_pos = (pred_exist * mask_f).sum()
+    # tp = (pred_exist * exists_label * mask_f).sum()
+    # fp = (pred_exist * (1.0 - exists_label) * mask_f).sum()
+    # fn = ((1.0 - pred_exist) * exists_label * mask_f).sum()
+    # precision = tp / jnp.maximum(tp + fp, 1e-8)
+    # recall = tp / jnp.maximum(tp + fn, 1e-8)
+    # prob_mean = (exist_prob * mask_f).sum() / jnp.maximum(mask_f.sum(), 1.0)
+    # metrics.update(
+    #     {
+    #         "precision": precision,
+    #         "recall": recall,
+    #         "frac_pred_pos": frac_pred_pos,
+    #         "exist_prob_mean": prob_mean,
+    #     }
+    # )
+    pred_exists = (jax.nn.sigmoid(exist_logits) > 0.5)
+    pred_rate = (mask * pred_exists).sum() / mask.sum()
+    mean_prob = (mask * jax.nn.sigmoid(exist_logits)).sum() / mask.sum()
+    metrics.update(
+        {
+            "pred_rate": pred_rate,
+            "mean_prob": mean_prob,
+        }
+    )
+    return loss, metrics
+
+
+def bond_reconstruction_focal_loss(
+    logits: jnp.ndarray,
+    type_label: jnp.ndarray,
+    mask: jnp.ndarray,
+    existence_weights: jnp.ndarray | None = None,
+    bond_type_weights: jnp.ndarray | None = None,
+    alpha: float = 0.25,
+    gamma: float = 2.0,
+    eps: float = 1e-8,
+) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    """Bond loss with focal loss on existence and CE on types."""
+    if logits.shape[-1] < 2:
+        raise ValueError("Concatenated logits must have at least 2 channels.")
+    exist_logits = logits[..., 0]
+    type_logits = logits[..., 1:]
+    exists_label = (type_label != 0).astype(jnp.float32)
+
+    p = jax.nn.sigmoid(exist_logits)
+    p = jnp.clip(p, eps, 1.0 - eps)
+    pt = jnp.where(exists_label == 1.0, p, 1.0 - p)
+    alpha_t = jnp.where(exists_label == 1.0, alpha, 1.0 - alpha)
+    focal = -alpha_t * ((1.0 - pt) ** gamma) * jnp.log(pt)
+    if existence_weights is not None:
+        focal = _apply_weights(focal, exists_label.astype(jnp.int32), existence_weights)
+    mask_f = mask.astype(focal.dtype)
+    valid_edges = jnp.maximum(mask_f.sum(axis=(1, 2)), 1.0)
+    loss_exist = (focal * mask_f).sum(axis=(1, 2)) / valid_edges
+
+    type_loss = optax.softmax_cross_entropy_with_integer_labels(type_logits, type_label)
+    type_loss = _apply_weights(type_loss, type_label, bond_type_weights)
+    type_loss = (type_loss * exists_label * mask_f).sum(axis=(1, 2)) / valid_edges
+
+    total = loss_exist + type_loss
+    loss = total.mean()
+    metrics = {
+        "loss": loss,
+        "loss_exist": loss_exist.mean(),
+        "loss_type": type_loss.mean(),
+    }
+    return loss, metrics
+
+
+def graph_reconstruction_loss(
+    recon: Dict[str, jnp.ndarray],
+    batch,
+    latents=None,
+    *,
+    atom_class_weights: jnp.ndarray | None = None,
+    node_loss_scale: float = 1.0,
+    bond_loss_scale: float = 1.0,
+    bond_loss_fn=bond_reconstruction_loss,
+    bond_loss_kwargs: Dict | None = None,
+) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    """Combine node cross-entropy and bond reconstruction losses.
+
+    Args:
+        recon: dict with ``"node"`` logits (B, N, n_atoms) and ``"edge"`` logits (B, N, N, 1+n_bond_types).
+        batch: GraphBatch containing ``atom_type``, ``bond_type``, ``node_mask``, ``pair_mask``.
+        atom_class_weights: optional class weights for atom CE.
+        node_loss_scale: scalar multiplier for the node CE term.
+        bond_loss_scale: scalar multiplier for the bond loss term.
+        bond_loss_fn: bond loss function (defaults to ``bond_reconstruction_loss``).
+        bond_loss_kwargs: extra kwargs forwarded to the bond loss.
+    """
+    bond_loss_kwargs = bond_loss_kwargs or {}
+
+    node_loss, node_metrics = masked_cross_entropy(
+        recon["node"],
+        batch.atom_type,
+        batch.node_mask,
+        class_weights=atom_class_weights,
+    )
+    bond_loss_val, bond_metrics = bond_loss_fn(
+        recon["edge"],
+        batch.bond_type,
+        batch.pair_mask,
+        **bond_loss_kwargs,
+    )
+
+    total = node_loss_scale * node_loss + bond_loss_scale * bond_loss_val
+    metrics = {
+        "loss": total,
+        "loss_node": node_loss,
+        "loss_bond": bond_loss_val,
+    }
+    metrics.update({f"node_{k}": v for k, v in node_metrics.items() if k != "loss"})
+    metrics.update({f"bond_{k}": v for k, v in bond_metrics.items() if k != "loss"})
+    return total, metrics
 
 __all__ = [
     "masked_mse",
     "masked_cosine_similarity",
     "masked_cross_entropy",
     "bond_reconstruction_loss",
+    "bond_reconstruction_focal_loss",
+    "graph_reconstruction_loss",
 ]

@@ -11,6 +11,7 @@ from jax.nn.initializers import zeros
 
 # Use absolute import to avoid any relative import ambiguity
 from mgd.model.utils import MLP
+from mgd.latent import GraphLatent
 
 
 class NodeCategoricalDecoder(nn.Module):
@@ -57,7 +58,7 @@ class EdgeCategoricalDecoder(nn.Module):
     @nn.compact
     def __call__(self, edge_latent: jnp.ndarray) -> jnp.ndarray:
         """Return symmetric edge logits of shape (..., n_atoms, n_atoms, n_categories)."""
-        ln = nn.LayerNorm(param_dtype=self.param_dtype)
+        # ln = nn.LayerNorm(param_dtype=self.param_dtype)
         mlp = MLP(
             self.hidden_dim,
             self.n_layers,
@@ -69,8 +70,8 @@ class EdgeCategoricalDecoder(nn.Module):
             # kernel_init=nn.initializers.variance_scaling(1.0, "fan_in", "normal"),
             )
 
-        h = ln(edge_latent)
-        h = mlp(h)
+        # h = ln(edge_latent)
+        h = mlp(edge_latent)
         h = self.activation(h)
         logits = head(h)
         logits_sym = 0.5 * (logits + jnp.swapaxes(logits, -3, -2))
@@ -78,4 +79,16 @@ class EdgeCategoricalDecoder(nn.Module):
         return logits_sym
 
 
-__all__ = ["NodeCategoricalDecoder", "EdgeCategoricalDecoder"]
+class GraphDecoder(nn.Module):
+    """Combine node and edge decoders to reconstruct graph features."""
+
+    node_decoder: nn.Module
+    edge_decoder: nn.Module
+
+    def __call__(self, latents: GraphLatent):
+        node_out = self.node_decoder(latents.node)
+        edge_out = self.edge_decoder(latents.edge)
+        return {"node": node_out, "edge": edge_out}
+
+
+__all__ = ["NodeCategoricalDecoder", "EdgeCategoricalDecoder", "GraphDecoder"]

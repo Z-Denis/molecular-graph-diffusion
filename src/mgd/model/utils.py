@@ -11,6 +11,43 @@ from flax import linen as nn
 FeaturesArg = Union[int, Sequence[int]]
 
 
+def estimate_latent_stats_masked(ae_state, loader, num_batches: int = 200):
+    """Estimate latent mean/std using masks from batches to ignore padding."""
+    m_node = 0.0
+    m_edge = 0.0
+    s_node = 0.0
+    s_edge = 0.0
+    w_node = 0.0
+    w_edge = 0.0
+
+    # Mean
+    for _, batch in zip(range(num_batches), loader):
+        lat = ae_state.encode(batch, apply_norm=False)
+        node_mask = batch.node_mask[..., None]
+        edge_mask = batch.pair_mask[..., None]
+        m_node += (lat.node * node_mask).sum(axis=(0, 1))
+        m_edge += (lat.edge * edge_mask).sum(axis=(0, 1, 2))
+        w_node += node_mask.sum()
+        w_edge += edge_mask.sum()
+    mean = {
+        "node": m_node / w_node,
+        "edge": m_edge / w_edge,
+    }
+
+    # Variance
+    for _, batch in zip(range(num_batches), loader):
+        lat = ae_state.encode(batch, apply_norm=False)
+        node_mask = batch.node_mask[..., None]
+        edge_mask = batch.pair_mask[..., None]
+        s_node += (jnp.square(lat.node - mean["node"]) * node_mask).sum(axis=(0, 1))
+        s_edge += (jnp.square(lat.edge - mean["edge"]) * edge_mask).sum(axis=(0, 1, 2))
+    std = {
+        "node": jnp.sqrt(s_node / w_node + 1e-8),
+        "edge": jnp.sqrt(s_edge / w_edge + 1e-8),
+    }
+    return mean, std
+
+
 class MLP(nn.Module):
     """Simple MLP with configurable layers and activation.
 
@@ -129,4 +166,4 @@ def bond_bias_initializer(p_exist: float, p_types: Sequence[float] | None = None
     return init
 
 
-__all__ = ["MLP", "aggregate_node_edge", "bond_bias_initializer"]
+__all__ = ["MLP", "aggregate_node_edge", "bond_bias_initializer", "estimate_latent_stats_masked"]

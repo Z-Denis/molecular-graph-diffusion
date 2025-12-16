@@ -1,4 +1,4 @@
-"""Graph diffusion wrapper combining embedding, noise injection, and denoising."""
+"""Graph diffusion wrapper combining forward noise and denoising."""
 
 from __future__ import annotations
 
@@ -9,27 +9,17 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
-from ..dataset.utils import GraphBatch
 from ..diffusion.schedules import DiffusionSchedule
 from ..latent import GraphLatent, latent_from_scalar
-from .embeddings import GraphEmbedder
 from .denoiser import MPNNDenoiser
 
 
 class GraphDiffusionModel(nn.Module):
-    """Latent graph diffusion with embedding, forward noise, and denoising.
+    """Latent graph diffusion with forward noise and denoising."""
 
-    The embedder is only needed when a clean graph is provided (e.g. training).
-    """
-    # TODO: Make API for AbstractDenoiser and AbstractEmbedder and check LatentSpace consistency
-    embedder: GraphEmbedder
     denoiser: MPNNDenoiser
     schedule: DiffusionSchedule
     param_dtype: DTypeLike = "float32"
-
-    def encode(self, graph: GraphBatch) -> GraphLatent:
-        """Embed raw graph features into latent node/edge tensors."""
-        return self.embedder(graph, graph.node_mask, graph.pair_mask)
 
     def q_sample(
         self,
@@ -63,13 +53,15 @@ class GraphDiffusionModel(nn.Module):
 
     def __call__(
         self,
-        graph: GraphBatch,
+        x0: GraphLatent,
         t: jnp.ndarray,
+        *,
+        node_mask: jnp.ndarray,
+        pair_mask: jnp.ndarray,
         noise_nodes: Optional[jnp.ndarray] = None,
         noise_edges: Optional[jnp.ndarray] = None,
     ) -> Dict[str, GraphLatent]:
         """Training forward pass returning noisy latents and predicted noise."""
-        x0 = self.encode(graph)
         if noise_nodes is None or noise_edges is None:
             rng = self.make_rng("noise")
             rng_n, rng_e = jax.random.split(rng)
@@ -81,8 +73,8 @@ class GraphDiffusionModel(nn.Module):
         eps = self.predict_eps(
             xt,
             t,
-            node_mask=graph.node_mask,
-            pair_mask=graph.pair_mask,
+            node_mask=node_mask,
+            pair_mask=pair_mask,
         )
         return {
             "eps_pred": eps,

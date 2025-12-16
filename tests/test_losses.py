@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 
 from mgd.training.losses import masked_cross_entropy
+from mgd.training.losses import graph_reconstruction_loss, bond_reconstruction_loss
 
 
 def test_masked_cross_entropy_node_only():
@@ -40,3 +41,33 @@ def test_masked_cross_entropy_label_smoothing():
 
     # Smoothing should reduce the loss relative to the hard label.
     assert total_smooth < total_hard
+
+
+def test_graph_reconstruction_loss_matches_components():
+    # Node part
+    node_logits = jnp.zeros((1, 2, 3))
+    atom_type = jnp.array([[1, 0]], dtype=jnp.int32)
+    node_mask = jnp.array([[1.0, 0.0]])
+    # Edge part: simple 2x2, mask zero to isolate node loss
+    edge_logits = jnp.zeros((1, 2, 2, 2))  # existence+1 bond type but shape still >=2
+    bond_type = jnp.zeros((1, 2, 2), dtype=jnp.int32)
+    pair_mask = jnp.zeros((1, 2, 2))
+
+    class Batch:
+        pass
+    batch = Batch()
+    batch.atom_type = atom_type
+    batch.bond_type = bond_type
+    batch.node_mask = node_mask
+    batch.pair_mask = pair_mask
+
+    recon = {"node": node_logits, "edge": edge_logits}
+
+    total, metrics = graph_reconstruction_loss(recon, batch)
+
+    node_loss, _ = masked_cross_entropy(node_logits, atom_type, node_mask)
+    bond_loss_val, _ = bond_reconstruction_loss(edge_logits, bond_type, pair_mask)
+
+    assert jnp.allclose(total, node_loss + bond_loss_val)
+    assert jnp.allclose(metrics["loss_node"], node_loss)
+    assert jnp.allclose(metrics["loss_bond"], bond_loss_val)

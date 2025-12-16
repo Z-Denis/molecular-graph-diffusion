@@ -43,15 +43,7 @@ class GraphBatchLoader:
         stop_gradient: bool = True,
         n_batches: int | None = None,
     ) -> None:
-        required = [
-            "atom_ids",
-            "hybrid_ids",
-            "node_continuous",
-            "bond_types",
-            "dknn",
-            "node_mask",
-            "pair_mask",
-        ]
+        required = ["atom_ids", "hybrid_ids", "node_continuous", "bond_types", "dknn", "node_mask", "pair_mask"]
         missing = [k for k in required if k not in data]
         if missing:
             raise KeyError(f"Missing required keys in data: {missing}. Provided keys: {list(data.keys())}")
