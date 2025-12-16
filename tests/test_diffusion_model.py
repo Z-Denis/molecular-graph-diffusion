@@ -18,14 +18,16 @@ def _tiny_batch():
     atom_type = jnp.array([[1, 2, 0], [0, 1, 0]], dtype=jnp.int32)
     hybrid = jnp.zeros_like(atom_type)
     cont = jnp.zeros((2, 3, 1), dtype=jnp.float32)
-    edges = jnp.zeros((2, 3, 3), dtype=jnp.int32)
+    edge_type = jnp.zeros((2, 3, 3), dtype=jnp.int32)
+    dknn = jnp.zeros((2, 3, 3, 1), dtype=jnp.float32)
     node_mask = (atom_type > 0).astype(jnp.float32)
     pair_mask = (node_mask[..., :, None] * node_mask[..., None, :]).astype(jnp.float32)
     return GraphBatch(
         atom_type=atom_type,
         hybrid=hybrid,
         cont=cont,
-        edges=edges,
+        bond_type=edge_type,
+        dknn=dknn,
         node_mask=node_mask,
         pair_mask=pair_mask,
     )
@@ -37,8 +39,9 @@ def _tiny_model():
         space=space,
         atom_embed_dim=4,
         hybrid_embed_dim=3,
-        cont_embed_dim=2,
-        edge_embed_dim=3,
+        atom_cont_embed_dim=2,
+        bond_embed_dim=3,
+        bond_cont_embed_dim=2,
     )
     denoiser = MPNNDenoiser(
         space=space,
@@ -46,7 +49,8 @@ def _tiny_model():
         time_dim=8,
     )
     schedule = cosine_beta_schedule(timesteps=10)
-    return GraphDiffusionModel(embedder=embedder, denoiser=denoiser, schedule=schedule)
+    model = GraphDiffusionModel(denoiser=denoiser, schedule=schedule)
+    return space, embedder, model
 
 
 def _make_state(model, params):
@@ -60,27 +64,44 @@ def _make_state(model, params):
 
 def test_training_forward_shapes_and_keys():
     batch = _tiny_batch()
-    model = _tiny_model()
+    space, embedder, model = _tiny_model()
     rng = {"params": jax.random.PRNGKey(0), "noise": jax.random.PRNGKey(1)}
+    embed_vars = embedder.init(jax.random.PRNGKey(123), batch, batch.node_mask, batch.pair_mask)
+    latents = embedder.apply(embed_vars, batch, batch.node_mask, batch.pair_mask)
     times = jnp.array([1, 2], dtype=jnp.int32)
-    variables = model.init(rng, batch, times)
-    outputs = model.apply(variables, batch, times, rngs={"noise": jax.random.PRNGKey(2)})
+    variables = model.init(rng, latents, times, node_mask=batch.node_mask, pair_mask=batch.pair_mask)
+    outputs = model.apply(
+        variables,
+        latents,
+        times,
+        node_mask=batch.node_mask,
+        pair_mask=batch.pair_mask,
+        rngs={"noise": jax.random.PRNGKey(2)},
+    )
     for key in ("eps_pred", "noise", "noisy", "clean"):
         assert key in outputs
         assert isinstance(outputs[key].node, jnp.ndarray)
         assert isinstance(outputs[key].edge, jnp.ndarray)
-    assert outputs["eps_pred"].node.shape == batch.cont.shape[:2] + (model.embedder.space.node_dim,)
-    assert outputs["eps_pred"].edge.shape == batch.pair_mask.shape + (model.embedder.space.edge_dim,)
+    assert outputs["eps_pred"].node.shape == batch.cont.shape[:2] + (space.node_dim,)
+    assert outputs["eps_pred"].edge.shape == batch.pair_mask.shape + (space.edge_dim,)
 
 
 def test_sample_masks_and_shapes_reproducible():
     batch = _tiny_batch()
-    model = _tiny_model()
+    space, embedder, model = _tiny_model()
     rngs = {"params": jax.random.PRNGKey(0), "noise": jax.random.PRNGKey(1)}
-    variables = model.init(rngs, batch, jnp.array([1, 2], dtype=jnp.int32))
+    embed_vars = embedder.init(jax.random.PRNGKey(123), batch, batch.node_mask, batch.pair_mask)
+    latents = embedder.apply(embed_vars, batch, batch.node_mask, batch.pair_mask)
+    variables = model.init(
+        rngs,
+        latents,
+        jnp.array([1, 2], dtype=jnp.int32),
+        node_mask=batch.node_mask,
+        pair_mask=batch.pair_mask,
+    )
 
     updater = DDPMUpdater(model.schedule)
-    sampler = LatentSampler(space=model.embedder.space, state=_make_state(model, variables["params"]), updater=updater)
+    sampler = LatentSampler(space=space, state=_make_state(model, variables["params"]), updater=updater)
     base_rng = jax.random.PRNGKey(42)
     out1 = sampler.sample(
         base_rng,
@@ -89,6 +110,7 @@ def test_sample_masks_and_shapes_reproducible():
         n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
         pair_mask=batch.pair_mask,
+        max_atoms=batch.atom_type.shape[1],
     )
     out2 = sampler.sample(
         base_rng,
@@ -97,6 +119,7 @@ def test_sample_masks_and_shapes_reproducible():
         n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
         pair_mask=batch.pair_mask,
+        max_atoms=batch.atom_type.shape[1],
     )
 
     assert jnp.allclose(out1.node, out2.node)
