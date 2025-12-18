@@ -12,6 +12,7 @@ from flax.training import train_state
 
 from mgd.latent import GraphLatent
 from tqdm import tqdm
+import jax.random as jr
 
 
 def _stat_for(value: Any, part: str):
@@ -90,6 +91,8 @@ def autoencoder_train_step(
     *,
     loss_fn: Callable,
     loss_kwargs: Dict | None = None,
+    noise_std: Any | None = None,
+    rng: jax.Array | None = None,
 ) -> Tuple[AutoencoderTrainState, Dict[str, jnp.ndarray]]:
     """One optimization step for the autoencoder with a user-provided loss_fn.
 
@@ -97,10 +100,26 @@ def autoencoder_train_step(
     return ``(loss, metrics_dict)``.
     """
     loss_kwargs = loss_kwargs or {}
+    if noise_std is not None and rng is None:
+        raise ValueError("rng must be provided when noise_std is set.")
+    rng = rng if rng is not None else jr.PRNGKey(0)
+
+    def _maybe_add_noise(latents: GraphLatent, key: jax.Array) -> GraphLatent:
+        """Add masked Gaussian noise of scale noise_std to latents."""
+        if noise_std is None:
+            return latents
+        key_n, key_e = jr.split(key)
+        std_node = _stat_for(noise_std, "node")
+        std_edge = _stat_for(noise_std, "edge")
+        node_noise = jr.normal(key_n, latents.node.shape) * std_node
+        edge_noise = jr.normal(key_e, latents.edge.shape) * std_edge
+        return GraphLatent(latents.node + node_noise, latents.edge + edge_noise).masked(batch.node_mask, batch.pair_mask)
 
     def _loss(params):
         recon, latents = state.model.apply({"params": params}, batch)
-        loss, metrics = loss_fn(recon=recon, batch=batch, latents=latents, **loss_kwargs)
+        latents_noisy = _maybe_add_noise(latents, rng)
+        recon_noisy = state.model.apply({"params": params}, latents_noisy, method=state.model.decode)
+        loss, metrics = loss_fn(recon=recon_noisy, batch=batch, latents=latents_noisy, **loss_kwargs)
         return loss, metrics
 
     (loss, metrics), grads = jax.value_and_grad(_loss, has_aux=True)(state.params)
@@ -124,19 +143,32 @@ def autoencoder_train_loop(
     logger,
     loss_fn: Callable,
     loss_kwargs: Dict | None = None,
+    noise_std: Any | None = None,
+    rng: jax.Array | None = None,
 ):
     """Step-based training loop for the autoencoder."""
     loss_kwargs = loss_kwargs or {}
-    step_fn = jax.jit(lambda st, b: autoencoder_train_step(st, b, loss_fn=loss_fn, loss_kwargs=loss_kwargs))
+    step_fn = jax.jit(
+        lambda st, b, r: autoencoder_train_step(
+            st,
+            b,
+            loss_fn=loss_fn,
+            loss_kwargs=loss_kwargs,
+            noise_std=noise_std,
+            rng=r,
+        )
+    )
 
     history = []
     metrics_buffer = []
     loader_iter = iter(loader)
+    rng = rng if rng is not None else jr.PRNGKey(0)
 
     with tqdm(total=n_steps) as pbar:
         for step in range(1, n_steps + 1):
+            rng, step_rng = jr.split(rng)
             batch = next(loader_iter)
-            state, metrics = step_fn(state, batch)
+            state, metrics = step_fn(state, batch, step_rng)
             metrics_buffer.append(metrics)
             pbar.update(1)
             if logger.log_every and (step % logger.log_every == 0):
