@@ -77,40 +77,6 @@ def masked_mse(
     return total, {"node_loss": node_loss, "edge_loss": edge_loss}
 
 
-def edm_masked_mse(
-    x_hat: GraphLatent,
-    x0: GraphLatent,
-    node_mask: jnp.ndarray,
-    pair_mask: jnp.ndarray,
-    *,
-    sigma: jnp.ndarray | None = None,
-    weight_fn=None,
-) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
-    """Masked MSE for EDM denoised prediction x_hat vs x0.
-
-    Implements L = mean_mask(||x_hat - x0||^2) over node/edge blocks.
-    Optional weighting: w = weight_fn(sigma) applied per-sample.
-    """
-    node_w = node_mask[..., None]
-    edge_w = pair_mask[..., None]
-
-    if weight_fn is not None and sigma is not None:
-        w = weight_fn(sigma)[..., None, None]
-        node_w = node_w * w
-        edge_w = edge_w * w[..., None]
-
-    node_err = jnp.square(x_hat.node - x0.node) * node_w
-    edge_err = jnp.square(x_hat.edge - x0.edge) * edge_w
-
-    node_norm = jnp.maximum(node_w.sum(), 1.0)
-    edge_norm = jnp.maximum(edge_w.sum(), 1.0)
-
-    node_loss = node_err.sum() / node_norm
-    edge_loss = edge_err.sum() / edge_norm
-    total = node_loss + edge_loss
-    return total, {"node_loss": node_loss, "edge_loss": edge_loss}
-
-
 def masked_cosine_similarity(
     pred: GraphLatent,
     target: GraphLatent,
@@ -362,31 +328,11 @@ def graph_reconstruction_loss(
         **bond_loss_kwargs,
     )
 
-    # Micro-F1 (mask-filtered). For multi-class atoms this is equivalent to accuracy.
-    atom_pred = jnp.argmax(recon["node"], axis=-1)
-    mask_nodes = batch.node_mask.astype(jnp.float32)
-    tp_atom = (mask_nodes * (atom_pred == batch.atom_type)).sum()
-    total_atom = jnp.maximum(mask_nodes.sum(), 1.0)
-    atom_f1 = tp_atom / total_atom
-
-    exist_logits = recon["edge"][..., 0]
-    exist_pred = (jax.nn.sigmoid(exist_logits) > 0.5).astype(jnp.float32)
-    exists_label = (batch.bond_type != 0).astype(jnp.float32)
-    mask_edges = batch.pair_mask.astype(jnp.float32)
-    tp_edge = (mask_edges * exist_pred * exists_label).sum()
-    fp_edge = (mask_edges * exist_pred * (1.0 - exists_label)).sum()
-    fn_edge = (mask_edges * (1.0 - exist_pred) * exists_label).sum()
-    precision = tp_edge / jnp.maximum(tp_edge + fp_edge, 1e-8)
-    recall = tp_edge / jnp.maximum(tp_edge + fn_edge, 1e-8)
-    bond_f1 = 2.0 * precision * recall / jnp.maximum(precision + recall, 1e-8)
-
     total = node_loss_scale * node_loss + bond_loss_scale * bond_loss_val
     metrics = {
         "loss": total,
         "loss_node": node_loss,
         "loss_bond": bond_loss_val,
-        "f1_atom": atom_f1,
-        "f1_bond_exist": bond_f1,
     }
     metrics.update({f"node_{k}": v for k, v in node_metrics.items() if k != "loss"})
     metrics.update({f"bond_{k}": v for k, v in bond_metrics.items() if k != "loss"})
@@ -394,7 +340,6 @@ def graph_reconstruction_loss(
 
 __all__ = [
     "masked_mse",
-    "edm_masked_mse",
     "masked_cosine_similarity",
     "masked_cross_entropy",
     "bond_reconstruction_loss",

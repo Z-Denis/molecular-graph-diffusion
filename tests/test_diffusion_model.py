@@ -4,11 +4,12 @@ import jax.numpy as jnp
 import optax
 
 from mgd.dataset.utils import GraphBatch
-from mgd.diffusion.schedules import make_sigma_schedule
-from mgd.latent import GraphLatentSpace, GraphLatent
+from mgd.diffusion.schedules import cosine_beta_schedule
+from mgd.latent import GraphLatentSpace
 from mgd.model.denoiser import MPNNDenoiser
 from mgd.model.diffusion_model import GraphDiffusionModel
-from mgd.sampling import HeunUpdater, LatentSampler
+from mgd.model.embeddings import GraphEmbedder
+from mgd.sampling import DDPMUpdater, LatentSampler
 from mgd.training.train_step import DiffusionTrainState
 
 
@@ -34,19 +35,22 @@ def _tiny_batch():
 
 def _tiny_model():
     space = GraphLatentSpace(node_dim=5, edge_dim=4, dtype=jnp.float32)
+    embedder = GraphEmbedder(
+        space=space,
+        atom_embed_dim=4,
+        hybrid_embed_dim=3,
+        atom_cont_embed_dim=2,
+        bond_embed_dim=3,
+        bond_cont_embed_dim=2,
+    )
     denoiser = MPNNDenoiser(
         space=space,
         mess_dim=6,
         time_dim=8,
     )
-    model = GraphDiffusionModel(
-        denoiser=denoiser,
-        sigma_data_node=1.0,
-        sigma_data_edge=1.0,
-        sigma_min=0.005,
-        sigma_max=8.0,
-    )
-    return space, model
+    schedule = cosine_beta_schedule(timesteps=10)
+    model = GraphDiffusionModel(denoiser=denoiser, schedule=schedule)
+    return space, embedder, model
 
 
 def _make_state(model, params):
@@ -60,54 +64,48 @@ def _make_state(model, params):
 
 def test_training_forward_shapes_and_keys():
     batch = _tiny_batch()
-    space, model = _tiny_model()
+    space, embedder, model = _tiny_model()
     rng = {"params": jax.random.PRNGKey(0), "noise": jax.random.PRNGKey(1)}
-    latents = GraphLatent(
-        jax.random.normal(jax.random.PRNGKey(123), batch.cont.shape[:2] + (space.node_dim,)),
-        jax.random.normal(jax.random.PRNGKey(456), batch.pair_mask.shape + (space.edge_dim,)),
-    )
-    sigma = jnp.array([0.5, 0.7], dtype=jnp.float32)
-    variables = model.init(rng, latents, sigma, node_mask=batch.node_mask, pair_mask=batch.pair_mask)
+    embed_vars = embedder.init(jax.random.PRNGKey(123), batch, batch.node_mask, batch.pair_mask)
+    latents = embedder.apply(embed_vars, batch, batch.node_mask, batch.pair_mask)
+    times = jnp.array([1, 2], dtype=jnp.int32)
+    variables = model.init(rng, latents, times, node_mask=batch.node_mask, pair_mask=batch.pair_mask)
     outputs = model.apply(
         variables,
         latents,
-        sigma,
+        times,
         node_mask=batch.node_mask,
         pair_mask=batch.pair_mask,
         rngs={"noise": jax.random.PRNGKey(2)},
     )
-    for key in ("x_hat", "noise", "noisy", "clean"):
+    for key in ("eps_pred", "noise", "noisy", "clean"):
         assert key in outputs
         assert isinstance(outputs[key].node, jnp.ndarray)
         assert isinstance(outputs[key].edge, jnp.ndarray)
-    assert outputs["x_hat"].node.shape == batch.cont.shape[:2] + (space.node_dim,)
-    assert outputs["x_hat"].edge.shape == batch.pair_mask.shape + (space.edge_dim,)
+    assert outputs["eps_pred"].node.shape == batch.cont.shape[:2] + (space.node_dim,)
+    assert outputs["eps_pred"].edge.shape == batch.pair_mask.shape + (space.edge_dim,)
 
 
 def test_sample_masks_and_shapes_reproducible():
     batch = _tiny_batch()
-    space, model = _tiny_model()
+    space, embedder, model = _tiny_model()
     rngs = {"params": jax.random.PRNGKey(0), "noise": jax.random.PRNGKey(1)}
-    latents = GraphLatent(
-        jax.random.normal(jax.random.PRNGKey(123), batch.cont.shape[:2] + (space.node_dim,)),
-        jax.random.normal(jax.random.PRNGKey(456), batch.pair_mask.shape + (space.edge_dim,)),
-    )
-    sigma = jnp.array([0.5, 0.7], dtype=jnp.float32)
+    embed_vars = embedder.init(jax.random.PRNGKey(123), batch, batch.node_mask, batch.pair_mask)
+    latents = embedder.apply(embed_vars, batch, batch.node_mask, batch.pair_mask)
     variables = model.init(
         rngs,
         latents,
-        sigma,
+        jnp.array([1, 2], dtype=jnp.int32),
         node_mask=batch.node_mask,
         pair_mask=batch.pair_mask,
     )
 
-    updater = HeunUpdater()
+    updater = DDPMUpdater(model.schedule)
     sampler = LatentSampler(space=space, state=_make_state(model, variables["params"]), updater=updater)
-    sigma_schedule = make_sigma_schedule(model.sigma_min, model.sigma_max, num_steps=5)
     base_rng = jax.random.PRNGKey(42)
     out1 = sampler.sample(
         base_rng,
-        sigma_schedule=sigma_schedule,
+        n_steps=3,
         batch_size=batch.atom_type.shape[0],
         n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
@@ -116,7 +114,7 @@ def test_sample_masks_and_shapes_reproducible():
     )
     out2 = sampler.sample(
         base_rng,
-        sigma_schedule=sigma_schedule,
+        n_steps=3,
         batch_size=batch.atom_type.shape[0],
         n_atoms=batch.atom_type.shape[1],
         node_mask=batch.node_mask,
