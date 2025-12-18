@@ -13,7 +13,8 @@ from flax.training import train_state
 from mgd.dataset.utils import GraphBatch
 from mgd.model.diffusion_model import GraphDiffusionModel
 from mgd.training.autoencoder import normalize_latent
-from mgd.training.losses import masked_mse
+from mgd.training.losses import edm_masked_mse
+from mgd.diffusion.schedules import sample_sigma, sample_sigma_mixture
 
 
 class DiffusionTrainState(train_state.TrainState):
@@ -51,22 +52,25 @@ class DiffusionTrainState(train_state.TrainState):
             )
         return normalize_latent(latents, self.latent_mean, self.latent_std)
 
-    def predict_eps(
+    def predict_xhat(
         self,
         xt,
-        t,
+        sigma,
         *,
         node_mask,
         pair_mask,
     ):
-        """Alias to model.predict_eps bound with current params."""
+        """Return x_hat = denoise(xt, sigma)."""
+        return self.denoise(xt, sigma, node_mask=node_mask, pair_mask=pair_mask)
+
+    def denoise(self, xt, sigma, *, node_mask, pair_mask):
         return self.model.apply(
             {"params": self.params},
             xt,
-            t,
+            sigma,
             node_mask=node_mask,
             pair_mask=pair_mask,
-            method=self.model.predict_eps,
+            method=self.model.denoise,
         )
 
 
@@ -99,11 +103,11 @@ def create_train_state(
         latent_std = encoder_state.latent_std
 
     rng_params, rng_noise = jax.random.split(rng)
-    t0 = jnp.zeros((sample_latent.node.shape[0],), dtype=jnp.int32)
+    sigma0 = jnp.ones((sample_latent.node.shape[0],), dtype=sample_latent.node.dtype)
     variables = model.init(
         {"params": rng_params, "noise": rng_noise},
         sample_latent,
-        t0,
+        sigma0,
         node_mask=node_mask,
         pair_mask=pair_mask,
     )
@@ -125,50 +129,49 @@ def train_step(
     batch: GraphBatch,
     rng: jax.Array,
     *,
-    loss_fn=masked_mse,
+    loss_fn=edm_masked_mse,
     loss_kwargs: dict | None = None,
-    use_p2: bool = False,
-    p2_exponent: float = 0.5,
 ) -> Tuple[DiffusionTrainState, dict]:
-    """One optimization step with noise prediction loss.
-
-    If ``use_p2`` is True, applies SNR-based p2 weighting (as in Imagen/DDPM++) with
-    weight = (SNR / (SNR + 1)) ** p2_exponent.
-    """
-    num_steps = state.model.schedule.betas.shape[0]
+    """One optimization step with EDM denoising loss."""
     loss_kwargs = loss_kwargs or {}
 
     def loss_inner(params):
-        rng_t, rng_noise = jax.random.split(rng)
+        rng_sigma, rng_noise = jax.random.split(rng)
         x0 = state.encode(batch)
-        t = jax.random.randint(rng_t, shape=(batch.atom_type.shape[0],), minval=0, maxval=num_steps)
+        cfg = dict(loss_kwargs)  # avoid mutating caller
+        sigma_min = cfg.pop("sigma_min", state.model.sigma_min)
+        sigma_max = cfg.pop("sigma_max", state.model.sigma_max)
+        p_low = cfg.pop("sigma_p_low", None)
+        k_low = cfg.pop("sigma_k_low", 3.0)
+        loss_kwargs_local = cfg
+        if p_low is not None:
+            sigma = sample_sigma_mixture(
+                rng_sigma,
+                (batch.atom_type.shape[0],),
+                sigma_min,
+                sigma_max,
+                p_low=p_low,
+                k=k_low,
+            )
+        else:
+            sigma = sample_sigma(rng_sigma, (batch.atom_type.shape[0],), sigma_min, sigma_max)
         outputs = state.model.apply(
             {"params": params},
             x0,
-            t,
+            sigma,
             node_mask=batch.node_mask,
             pair_mask=batch.pair_mask,
             rngs={"noise": rng_noise},
         )
-        if use_p2:
-            snr_t = state.model.schedule.snr(t)
-            weight = (snr_t / (snr_t + 1.0)) ** p2_exponent
-            node_w = weight
-            edge_w = weight
-        else:
-            node_w = None
-            edge_w = None
-
         loss, parts = loss_fn(
-            outputs["eps_pred"],
-            outputs["noise"],
+            outputs["x_hat"],
+            outputs["clean"],
             batch.node_mask,
             batch.pair_mask,
-            node_weight=node_w,
-            edge_weight=edge_w,
-            **loss_kwargs,
+            sigma=sigma,
+            **loss_kwargs_local,
         )
-        parts["t_mean"] = jnp.mean(t)
+        parts["sigma_mean"] = jnp.mean(sigma)
         return loss, parts
 
     (loss, metrics), grads = jax.value_and_grad(loss_inner, has_aux=True)(state.params)
