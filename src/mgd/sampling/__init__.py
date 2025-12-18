@@ -1,6 +1,6 @@
-"""Sampling utilities for reverse diffusion over molecular graphs."""
+"""Sampling utilities for reverse EDM over molecular graphs."""
 
 from .sampler import LatentSampler
-from .updater import BaseUpdater, DDIMUpdater, DDPMUpdater
+from .updater import HeunUpdater
 
-__all__ = ["LatentSampler", "BaseUpdater", "DDPMUpdater", "DDIMUpdater"]
+__all__ = ["LatentSampler", "HeunUpdater"]

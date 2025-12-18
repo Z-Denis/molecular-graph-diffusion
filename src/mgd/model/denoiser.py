@@ -27,7 +27,7 @@ class MPNNDenoiser(nn.Module):
     def __call__(
         self,
         xt: GraphLatent,
-        time: jnp.ndarray,
+        log_sigma: jnp.ndarray,
         *,
         node_mask: jnp.ndarray,
         pair_mask: jnp.ndarray,
@@ -43,8 +43,13 @@ class MPNNDenoiser(nn.Module):
         )
 
         # Evaluate heads
-        nodes, edges = backbone(xt.node, xt.edge, time,
-                                node_mask=node_mask, pair_mask=pair_mask)
+        nodes, edges = backbone(
+            xt.node,
+            xt.edge,
+            log_sigma,
+            node_mask=node_mask,
+            pair_mask=pair_mask,
+        )
 
         # Latent to noise space
         eps_nodes = nn.Dense(
