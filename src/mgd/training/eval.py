@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable, Dict, Iterable, Optional, Union
+from typing import Callable, Dict, Iterable
 
 import jax
 import jax.numpy as jnp
 
 from mgd.dataset.utils import GraphBatch
-from mgd.training.losses import masked_mse
+from mgd.training.losses import edm_masked_mse
+from mgd.diffusion.schedules import sample_sigma
 
 
 @partial(jax.jit, static_argnames=["apply_fn", "eval_fn"])
@@ -20,43 +21,35 @@ def eval_step(
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
     rng: jax.Array,
-    num_steps: int,
+    sigma_min: float,
+    sigma_max: float,
     eval_fn: Callable,
-    time: Optional[Union[jax.Array, int]] = None,
 ) -> Dict[str, jnp.ndarray]:
-    """Single evaluation step with masked noise-prediction loss."""
-    rng_t, rng_noise = jax.random.split(rng)
+    """Single evaluation step with masked EDM x0-prediction loss."""
+    rng_s, rng_noise = jax.random.split(rng)
     batch_size = latents.node.shape[0]
-    if time is None:
-        t = jax.random.randint(rng_t, (batch_size,), 0, num_steps)
-    else:
-        t = jnp.asarray(time)
-        if t.ndim == 0:
-            t = jnp.full((batch_size,), t, dtype=jnp.int32)
+    sigma = sample_sigma(rng_s, (batch_size,), sigma_min, sigma_max)
     outputs = apply_fn(
         {"params": params},
         latents,
-        t,
+        sigma,
         node_mask=node_mask,
         pair_mask=pair_mask,
         rngs={"noise": rng_noise},
     )
-    loss, parts = eval_fn(outputs["eps_pred"], outputs["noise"], node_mask, pair_mask)
-    return {"loss": loss, **parts}
+    loss, parts = eval_fn(outputs["x_hat"], outputs["clean"], node_mask, pair_mask, sigma=sigma)
+    return {"loss": loss, "sigma_mean": sigma.mean(), **parts}
 
 
 def evaluate(
     state,
     loader: Iterable[GraphBatch],
     rng: jax.Array,
-    eval_fn: Callable = masked_mse,
-    time: Optional[Union[jax.Array, int]] = None,
+    eval_fn: Callable = edm_masked_mse,
 ) -> Dict[str, jnp.ndarray]:
-    """Run evaluation over a loader and return mean metrics.
-
-    ``time`` can be None (random per-example timesteps) or a scalar/array of timesteps.
-    """
-    num_steps = state.model.schedule.betas.shape[0]
+    """Run evaluation over a loader and return mean metrics."""
+    sigma_min = getattr(state.model, "sigma_min")
+    sigma_max = getattr(state.model, "sigma_max")
     params = state.params
     apply_fn = state.apply_fn
 
@@ -72,9 +65,9 @@ def evaluate(
                 batch.node_mask,
                 batch.pair_mask,
                 step_rng,
-                num_steps,
+                sigma_min,
+                sigma_max,
                 eval_fn,
-                time=time,
             )
         )
     stacked = {k: jnp.stack([m[k] for m in metrics]) for k in metrics[0]}
