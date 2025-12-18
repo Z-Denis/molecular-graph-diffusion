@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from mgd.dataset.utils import GraphBatch
 from mgd.training.checkpoints import restore_checkpoint, save_checkpoint
 from mgd.training.train_step import DiffusionTrainState, train_step
-from mgd.training.losses import edm_masked_mse
+from mgd.training.losses import masked_mse
 from mgd.utils.logging import Logger
 
 from tqdm import tqdm
@@ -30,8 +30,10 @@ def train_loop(
     n_steps: int,
     rng: jax.Array,
     logger: Logger,
-    loss_fn=edm_masked_mse,
+    loss_fn=masked_mse,
     loss_kwargs: dict | None = None,
+    use_p2: bool = False,
+    p2_exponent: float = 0.5,
 ) -> Tuple[DiffusionTrainState, List[Dict[str, jnp.ndarray]]]:
     """Step-based training loop (streaming over the loader as needed).
 
@@ -45,6 +47,8 @@ def train_loop(
             r,
             loss_fn=loss_fn,
             loss_kwargs=loss_kwargs,
+            use_p2=use_p2,
+            p2_exponent=p2_exponent,
         )
     )
     history: List[Dict[str, jnp.ndarray]] = []
