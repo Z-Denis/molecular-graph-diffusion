@@ -284,6 +284,80 @@ def bond_reconstruction_loss(
     return loss, metrics
 
 
+def _expected_bond_order(exist_logits, type_logits, bond_orders):
+    p_exist = jax.nn.sigmoid(exist_logits)
+    p_type = jax.nn.softmax(type_logits, axis=-1)
+    bo = jnp.asarray(bond_orders)
+    if bo.shape[0] == p_type.shape[-1] - 1:
+        bo = jnp.concatenate([jnp.zeros((1,), dtype=bo.dtype), bo], axis=0)
+    if bo.shape[0] != p_type.shape[-1]:
+        raise ValueError(f"bond_orders length {bo.shape[0]} must match type logits dim {p_type.shape[-1]}")
+    return p_exist * jnp.sum(p_type * bo, axis=-1)  # (B, N, N)
+
+
+def valence_penalty(
+    recon_edge: jnp.ndarray,
+    batch,
+    *,
+    bond_orders: jnp.ndarray = BOND_ORDERS,
+    valence_table: jnp.ndarray | None = None,
+    variant: str = "symmetric",
+) -> jnp.ndarray:
+    exist_logits = recon_edge[..., 0]
+    type_logits = recon_edge[..., 1:]
+    expected_bond = _expected_bond_order(exist_logits, type_logits, bond_orders)
+
+    eye = jnp.eye(expected_bond.shape[-1], dtype=expected_bond.dtype)
+    mask_edges = batch.pair_mask.astype(expected_bond.dtype) * (1.0 - eye)
+    expected_bond = expected_bond * mask_edges
+
+    v_hat = expected_bond.sum(axis=-1)  # (B, N)
+    table = jnp.asarray(valence_table if valence_table is not None else VALENCE_TABLE, dtype=v_hat.dtype)
+    v_target = jnp.take(table, batch.atom_type)
+
+    if variant == "over":
+        penalty = jnp.square(jnp.maximum(v_hat - v_target, 0.0))
+    else:
+        penalty = jnp.square(v_hat - v_target)
+    mask_nodes = batch.node_mask.astype(penalty.dtype)
+    return (penalty * mask_nodes).sum() / jnp.maximum(mask_nodes.sum(), 1.0)
+
+
+def aromatic_coherence_penalty(
+    recon_edge: jnp.ndarray,
+    batch,
+    *,
+    aromatic_index: int = 4,
+) -> jnp.ndarray:
+    """Gated aromatic penalty with labels:
+
+    y_arom = 1 if ground-truth bond is aromatic else 0
+    a_i = 1 if atom i touches any aromatic bond else 0
+    p_arom = p_exist * p_type[..., aromatic_index-1]
+    d_hat_i = sum_j p_arom(i,j)
+    L = mean_i [ a_i * relu(2 - d_hat_i)^2 + (1 - a_i) * (d_hat_i)^2 ]
+    """
+    exist_logits = recon_edge[..., 0]
+    type_logits = recon_edge[..., 1:]
+    p_exist = jax.nn.sigmoid(exist_logits)
+    p_type = jax.nn.softmax(type_logits, axis=-1)
+    p_arom = p_exist * p_type[..., aromatic_index-1]
+
+    eye = jnp.eye(p_arom.shape[-1], dtype=p_arom.dtype)
+    mask_edges = batch.pair_mask.astype(p_arom.dtype) * (1.0 - eye)
+    p_arom = p_arom * mask_edges
+
+    d_hat = p_arom.sum(axis=-1)
+
+    # Ground-truth aromatic mask per edge and node
+    y_arom = (batch.bond_type == aromatic_index).astype(p_arom.dtype) * mask_edges
+    a_i = (y_arom.sum(axis=-1) > 0).astype(p_arom.dtype)
+
+    penalty = a_i * jnp.square(jnp.maximum(2.0 - d_hat, 0.0)) + (1.0 - a_i) * jnp.square(d_hat)
+    mask_nodes = batch.node_mask.astype(penalty.dtype)
+    return (penalty * mask_nodes).sum() / jnp.maximum(mask_nodes.sum(), 1.0)
+
+
 def bond_reconstruction_focal_loss(
     logits: jnp.ndarray,
     type_label: jnp.ndarray,
@@ -340,6 +414,8 @@ def graph_reconstruction_loss(
     valence_table: jnp.ndarray | None = None,
     valence_variant: str = "symmetric",
     bond_orders: jnp.ndarray | None = BOND_ORDERS,
+    lambda_aromatic: float = 0.0,
+    aromatic_index: int = 4,
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Combine node cross-entropy and bond reconstruction losses.
 
@@ -374,34 +450,22 @@ def graph_reconstruction_loss(
     # Valence penalty (optional)
     val_loss = jnp.array(0.0, dtype=recon["edge"].dtype)
     if lambda_valence != 0.0:
-        exist_logits = recon["edge"][..., 0]
-        type_logits = recon["edge"][..., 1:]
-        p_exist = jax.nn.sigmoid(exist_logits)
-        p_type = jax.nn.softmax(type_logits, axis=-1)
+        val_loss = valence_penalty(
+            recon["edge"],
+            batch,
+            bond_orders=bond_orders,
+            valence_table=valence_table,
+            variant=valence_variant,
+        )
 
-        bo = jnp.asarray(bond_orders)
-        if bo.shape[0] == p_type.shape[-1] - 1:
-            # If provided without the pad/no-bond slot, prepend zero.
-            bo = jnp.concatenate([jnp.zeros((1,), dtype=bo.dtype), bo], axis=0)
-        if bo.shape[0] != p_type.shape[-1]:
-            raise ValueError(f"bond_orders length {bo.shape[0]} must match type logits dim {p_type.shape[-1]}")
-        expected_bond = p_exist * jnp.sum(p_type * bo, axis=-1)  # (B, N, N)
-
-        # Mask self-edges and padding
-        eye = jnp.eye(expected_bond.shape[-1], dtype=expected_bond.dtype)
-        mask_edges = batch.pair_mask.astype(expected_bond.dtype) * (1.0 - eye)
-        expected_bond = expected_bond * mask_edges
-
-        v_hat = expected_bond.sum(axis=-1)  # (B, N)
-        table = jnp.asarray(valence_table if valence_table is not None else VALENCE_TABLE, dtype=v_hat.dtype)
-        v_target = jnp.take(table, batch.atom_type)
-
-        if valence_variant == "over":
-            penalty = jnp.square(jnp.maximum(v_hat - v_target, 0.0))
-        else:
-            penalty = jnp.square(v_hat - v_target)
-        mask_nodes = batch.node_mask.astype(penalty.dtype)
-        val_loss = (penalty * mask_nodes).sum() / jnp.maximum(mask_nodes.sum(), 1.0)
+    # Aromatic coherence (optional)
+    arom_loss = jnp.array(0.0, dtype=recon["edge"].dtype)
+    if lambda_aromatic != 0.0:
+        arom_loss = aromatic_coherence_penalty(
+            recon["edge"],
+            batch,
+            aromatic_index=aromatic_index,
+        )
 
     # Micro-F1 (mask-filtered). For multi-class atoms this is equivalent to accuracy.
     atom_pred = jnp.argmax(recon["node"], axis=-1)
@@ -430,12 +494,18 @@ def graph_reconstruction_loss(
     total_types = jnp.maximum(mask_types.sum(), 1e-8)
     bond_type_f1 = tp_type / total_types
 
-    total = node_loss_scale * node_loss + bond_loss_scale * bond_loss_val + lambda_valence * val_loss
+    total = (
+        node_loss_scale * node_loss
+        + bond_loss_scale * bond_loss_val
+        + lambda_valence * val_loss
+        + lambda_aromatic * arom_loss
+    )
     metrics = {
         "loss": total,
         "loss_node": node_loss,
         "loss_bond": bond_loss_val,
         "loss_valence": val_loss,
+        "loss_aromatic": arom_loss,
         "f1_atom": atom_f1,
         "f1_bond_exist": bond_f1,
         "f1_bond_type": bond_type_f1,
@@ -452,4 +522,6 @@ __all__ = [
     "bond_reconstruction_loss",
     "bond_reconstruction_focal_loss",
     "graph_reconstruction_loss",
+    "valence_penalty",
+    "aromatic_coherence_penalty",
 ]
