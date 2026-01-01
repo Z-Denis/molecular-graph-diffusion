@@ -41,6 +41,8 @@ class DiffusionTrainState(train_state.TrainState):
             elif self.encoder_method is not None:
                 apply_fn = self.encoder_apply_fn
                 method = self.encoder_method
+            elif callable(self.encoder_apply_fn):
+                return self.encoder_apply_fn(self.encoder_params, batch)
             else:
                 raise ValueError(
                     "encoder_apply_fn must be a module with .apply/.encode or provide encoder_method explicitly."
