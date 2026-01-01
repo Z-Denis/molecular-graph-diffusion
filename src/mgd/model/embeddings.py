@@ -14,6 +14,29 @@ from ..dataset.utils import GraphBatch
 from ..latent import GraphLatent, GraphLatentSpace
 
 
+class OneHotGraphEmbedder(nn.Module):
+    """Parameter-free embedder that returns masked one-hot latents."""
+
+    space: GraphLatentSpace
+
+    @nn.compact
+    def __call__(
+        self,
+        graph: GraphBatch,
+        node_mask: jnp.ndarray | None = None,
+        pair_mask: jnp.ndarray | None = None,
+    ) -> GraphLatent:
+        if node_mask is None:
+            node_mask = graph.node_mask
+        if pair_mask is None:
+            pair_mask = graph.pair_mask
+        node_onehot = jax.nn.one_hot(graph.atom_type, self.space.node_dim, dtype=self.space.dtype)
+        edge_onehot = jax.nn.one_hot(graph.bond_type, self.space.edge_dim, dtype=self.space.dtype)
+        node_onehot = node_onehot * node_mask[..., None]
+        edge_onehot = edge_onehot * pair_mask[..., None]
+        return GraphLatent(node=node_onehot, edge=edge_onehot)
+
+
 class NodeEmbedder(nn.Module):
     """Embed atom categorical + continuous features into a shared hidden space (no mask!).
 

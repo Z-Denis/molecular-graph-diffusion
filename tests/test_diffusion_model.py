@@ -12,6 +12,14 @@ from mgd.sampling import HeunUpdater, LatentSampler
 from mgd.training.train_step import DiffusionTrainState
 
 
+class _DummySpace:
+    def encode(self, batch):
+        return batch
+
+    def loss(self, outputs, batch):
+        return jnp.array(0.0), {}
+
+
 def _tiny_batch():
     # Two graphs, three nodes (third node is padded)
     atom_type = jnp.array([[1, 2, 0], [0, 1, 0]], dtype=jnp.int32)
@@ -55,6 +63,8 @@ def _make_state(model, params):
         params=params,
         tx=optax.identity(),
         model=model,
+        space=_DummySpace(),
+        sigma_sampler=lambda rng, shape, sigma_min, sigma_max: jnp.ones(shape, dtype=jnp.float32),
     )
 
 
