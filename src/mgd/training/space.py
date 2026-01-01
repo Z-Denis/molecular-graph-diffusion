@@ -27,6 +27,14 @@ def _identity(latent: GraphLatent) -> GraphLatent:
     return latent
 
 
+def center_logits(logits: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
+    """Center logits per node/edge across classes using the provided mask."""
+    weights = mask[..., None]
+    denom = jnp.maximum(weights.sum(axis=-1, keepdims=True), 1.0)
+    mean = (logits * weights).sum(axis=-1, keepdims=True) / denom
+    return logits - mean
+
+
 @dataclass(frozen=True)
 class LatentDiffusionSpace:
     """EDM latent diffusion space with configurable encoder and normalization."""
@@ -54,6 +62,7 @@ class OneHotLogitDiffusionSpace:
 
     space: GraphLatentSpace
     loss_fn: Callable[..., Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]] = edm_masked_mse
+    gauge_fix: bool = False
 
     def encode(self, batch: GraphBatch) -> GraphLatent:
         node = jax.nn.one_hot(batch.atom_type, self.space.node_dim, dtype=self.space.dtype)
@@ -64,13 +73,18 @@ class OneHotLogitDiffusionSpace:
         )
 
     def loss(self, outputs: Dict[str, object], batch: GraphBatch) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
-        return self.loss_fn(
-            outputs["x_hat"],
-            outputs["clean"],
-            batch.node_mask,
-            batch.pair_mask,
-            sigma=outputs["sigma"],
-        )
+        x_hat = outputs["x_hat"]
+        clean = outputs["clean"]
+        if self.gauge_fix:
+            x_hat = GraphLatent(
+                center_logits(x_hat.node, batch.node_mask),
+                center_logits(x_hat.edge, batch.pair_mask),
+            )
+            clean = GraphLatent(
+                center_logits(clean.node, batch.node_mask),
+                center_logits(clean.edge, batch.pair_mask),
+            )
+        return self.loss_fn(x_hat, clean, batch.node_mask, batch.pair_mask, sigma=outputs["sigma"])
 
 
 __all__ = ["DiffusionSpace", "LatentDiffusionSpace", "OneHotLogitDiffusionSpace"]
