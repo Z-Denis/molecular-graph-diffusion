@@ -6,7 +6,7 @@ from typing import Dict, List
 
 import jax.numpy as jnp
 
-from mgd.training.checkpoints import save_checkpoint
+from mgd.utils.checkpoints import save_checkpoint
 from mgd.training.train_step import DiffusionTrainState
 
 

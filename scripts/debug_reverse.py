@@ -5,11 +5,11 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from mgd.dataset.dataloader import GraphBatchLoader
+from mgd.dataset import GraphBatchLoader
 from mgd.diffusion.schedules import DiffusionSchedule
 from mgd.latent import GraphLatent
 from mgd.sampling.updater import DDPMUpdater
-from mgd.training.train_step import DiffusionTrainState
+from mgd.training import DiffusionTrainState
 
 
 def masked_mean_std(latent: GraphLatent, node_mask, pair_mask, eps=1e-8):
