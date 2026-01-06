@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from mgd.dataset.utils import GraphBatch
-from mgd.latent import GraphLatent, GraphLatentSpace
+from mgd.latent import GraphLatent, GraphLatentSpace, center_logits
 from mgd.training.losses import edm_masked_mse
 
 
@@ -25,14 +25,6 @@ class DiffusionSpace(Protocol):
 
 def _identity(latent: GraphLatent) -> GraphLatent:
     return latent
-
-
-def center_logits(logits: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
-    """Center logits per node/edge across classes using the provided mask."""
-    weights = mask[..., None]
-    denom = jnp.maximum(weights.sum(axis=-1, keepdims=True), 1.0)
-    mean = (logits * weights).sum(axis=-1, keepdims=True) / denom
-    return logits - mean
 
 
 @dataclass(frozen=True)
@@ -62,7 +54,7 @@ class OneHotLogitDiffusionSpace:
 
     space: GraphLatentSpace
     loss_fn: Callable[..., Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]] = edm_masked_mse
-    gauge_fix: bool = False
+    gauge_fix: bool = True
 
     def encode(self, batch: GraphBatch) -> GraphLatent:
         node = jax.nn.one_hot(batch.atom_type, self.space.node_dim, dtype=self.space.dtype)
