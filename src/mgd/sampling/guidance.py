@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from mgd.latent import GraphLatent, center_logits
-from mgd.dataset.encoding import BOND_ORDERS, VALENCE_TABLE
+from mgd.dataset.qm9 import BOND_ORDERS, VALENCE_TABLE
 
 
 def _edge_probs(edge_logits: jnp.ndarray) -> jnp.ndarray:
