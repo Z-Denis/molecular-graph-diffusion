@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from mgd.dataset.utils import GraphBatch
-from mgd.latent import GraphLatent, GraphLatentSpace
+from mgd.latent import GraphLatent, GraphLatentSpace, center_logits
 from mgd.training.losses import edm_masked_mse
 
 
@@ -54,6 +54,7 @@ class OneHotLogitDiffusionSpace:
 
     space: GraphLatentSpace
     loss_fn: Callable[..., Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]] = edm_masked_mse
+    gauge_fix: bool = True
 
     def encode(self, batch: GraphBatch) -> GraphLatent:
         node = jax.nn.one_hot(batch.atom_type, self.space.node_dim, dtype=self.space.dtype)
@@ -64,13 +65,18 @@ class OneHotLogitDiffusionSpace:
         )
 
     def loss(self, outputs: Dict[str, object], batch: GraphBatch) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
-        return self.loss_fn(
-            outputs["x_hat"],
-            outputs["clean"],
-            batch.node_mask,
-            batch.pair_mask,
-            sigma=outputs["sigma"],
-        )
+        x_hat = outputs["x_hat"]
+        clean = outputs["clean"]
+        if self.gauge_fix:
+            x_hat = GraphLatent(
+                center_logits(x_hat.node, batch.node_mask),
+                center_logits(x_hat.edge, batch.pair_mask),
+            )
+            clean = GraphLatent(
+                center_logits(clean.node, batch.node_mask),
+                center_logits(clean.edge, batch.pair_mask),
+            )
+        return self.loss_fn(x_hat, clean, batch.node_mask, batch.pair_mask, sigma=outputs["sigma"])
 
 
 __all__ = ["DiffusionSpace", "LatentDiffusionSpace", "OneHotLogitDiffusionSpace"]
