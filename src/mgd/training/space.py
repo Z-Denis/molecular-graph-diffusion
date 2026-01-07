@@ -55,10 +55,13 @@ class OneHotLogitDiffusionSpace:
     space: GraphLatentSpace
     loss_fn: Callable[..., Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]] = edm_masked_mse
     gauge_fix: bool = True
+    alpha: float = 2.0
 
     def encode(self, batch: GraphBatch) -> GraphLatent:
-        node = jax.nn.one_hot(batch.atom_type, self.space.node_dim, dtype=self.space.dtype)
-        edge = jax.nn.one_hot(batch.bond_type, self.space.edge_dim, dtype=self.space.dtype)
+        node_oh = jax.nn.one_hot(batch.atom_type, self.space.node_dim, dtype=self.space.dtype)
+        edge_oh = jax.nn.one_hot(batch.bond_type, self.space.edge_dim, dtype=self.space.dtype)
+        node = (2.0 * node_oh - 1.0) * self.alpha
+        edge = (2.0 * edge_oh - 1.0) * self.alpha
         return GraphLatent(
             node=node * batch.node_mask[..., None],
             edge=edge * batch.pair_mask[..., None],
