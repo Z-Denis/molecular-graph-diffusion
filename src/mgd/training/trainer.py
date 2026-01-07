@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from mgd.dataset.utils import GraphBatch
-from mgd.training.checkpoints import restore_checkpoint, save_checkpoint
+from mgd.utils.checkpoints import restore_checkpoint, save_checkpoint
 from mgd.training.train_step import DiffusionTrainState, train_step
 from mgd.utils.logging import Logger
 

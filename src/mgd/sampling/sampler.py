@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import jax
 import jax.numpy as jnp
@@ -66,6 +66,9 @@ class LatentSampler:
         pair_mask: Optional[jnp.ndarray] = None,
         snapshot_steps: Optional[jnp.ndarray] = None,
         max_atoms: int = None,
+        guidance_fn: Optional[
+            Callable[[GraphLatent, jnp.ndarray, jnp.ndarray, jnp.ndarray], GraphLatent]
+        ] = None,
     ):
         """Iteratively sample x_0 from noise using the provided updater.
 
@@ -109,6 +112,8 @@ class LatentSampler:
             sigma = sigma_schedule[idx]
             sigma_next = sigma_schedule[jnp.minimum(idx + 1, sigma_schedule.shape[0] - 1)]
             x_hat = self.predict_fn(xt_c, sigma, node_mask, pair_mask)
+            if guidance_fn is not None:
+                x_hat = guidance_fn(x_hat, node_mask, pair_mask, sigma)
             ds = sigma_next - sigma
             slope = GraphLatent(
                 (xt_c.node - x_hat.node) / sigma[..., None, None],

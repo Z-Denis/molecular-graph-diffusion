@@ -1,24 +1,33 @@
 """Model package containing GNN-based denoisers and helpers."""
 
 from .autoencoder import GraphAutoencoder
+from .autoencoder_onehot import OneHotAutoencoder
+from .decoder import GraphDecoder, NodeCategoricalDecoder, EdgeCategoricalDecoder
 from .diffusion_model import GraphDiffusionModel
 from .denoiser import MPNNDenoiser
-from .embeddings import GraphEmbedder, NodeEmbedder, PairEmbedder, TimeEmbedding, sinusoidal_time_embedding
+from .embeddings import (
+    GraphEmbedder,
+    OneHotGraphEmbedder,
+    NodeEmbedder,
+    PairEmbedder,
+    TimeEmbedding,
+)
 from .gnn_layers import MessagePassingLayer
-from .utils import MLP, aggregate_node_edge
 from ..latent import GraphLatent
 
 __all__ = [
     "GraphAutoencoder",
+    "OneHotAutoencoder",
+    "GraphDecoder",
+    "NodeCategoricalDecoder",
+    "EdgeCategoricalDecoder",
     "GraphDiffusionModel",
     "MPNNDenoiser",
     "GraphEmbedder",
+    "OneHotGraphEmbedder",
     "NodeEmbedder",
     "PairEmbedder",
     "TimeEmbedding",
-    "sinusoidal_time_embedding",
     "MessagePassingLayer",
-    "MLP",
-    "aggregate_node_edge",
     "GraphLatent",
 ]

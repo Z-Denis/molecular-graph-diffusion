@@ -9,7 +9,7 @@ from jax.typing import DTypeLike
 import jax.numpy as jnp
 from flax import linen as nn
 
-from ..dataset.encoding import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
+from ..dataset.qm9 import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
 from ..dataset.utils import GraphBatch
 from ..latent import GraphLatent, GraphLatentSpace
 

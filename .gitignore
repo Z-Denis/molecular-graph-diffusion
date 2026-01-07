@@ -15,6 +15,7 @@ outputs/
 
 # Notebooks
 *.ipynb_checkpoints/
+notebooks/
 
 # OS files
 .DS_Store
