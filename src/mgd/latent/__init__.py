@@ -6,7 +6,7 @@ from .space import (
     GraphLatentSpace,
     latent_from_scalar,
 )
-from .utils import center_logits
+from .utils import center_logits, symmetrize_edge, symmetrize_latent
 
 __all__ = [
     "AbstractLatentSpace",
@@ -14,4 +14,6 @@ __all__ = [
     "GraphLatent",
     "latent_from_scalar",
     "center_logits",
+    "symmetrize_edge",
+    "symmetrize_latent",
 ]

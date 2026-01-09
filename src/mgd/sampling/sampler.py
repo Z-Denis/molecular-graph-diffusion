@@ -7,7 +7,7 @@ from typing import Callable, Optional, Union
 import jax
 import jax.numpy as jnp
 
-from mgd.latent import GraphLatent, AbstractLatentSpace
+from mgd.latent import GraphLatent, AbstractLatentSpace, symmetrize_latent
 from mgd.sampling.updater import HeunUpdater
 from mgd.training.train_step import DiffusionTrainState
 
@@ -88,7 +88,7 @@ class LatentSampler:
             node_mask=node_mask,
             pair_mask=pair_mask,
         )
-        xt = xt * sigma_schedule[0]
+        xt = symmetrize_latent(xt, node_mask, pair_mask) * sigma_schedule[0]
 
         record = snapshot_steps is not None
         if record:
@@ -112,8 +112,10 @@ class LatentSampler:
             sigma = sigma_schedule[idx]
             sigma_next = sigma_schedule[jnp.minimum(idx + 1, sigma_schedule.shape[0] - 1)]
             x_hat = self.predict_fn(xt_c, sigma, node_mask, pair_mask)
+            x_hat = symmetrize_latent(x_hat, node_mask, pair_mask)
             if guidance_fn is not None:
                 x_hat = guidance_fn(x_hat, node_mask, pair_mask, sigma)
+                x_hat = symmetrize_latent(x_hat, node_mask, pair_mask)
             ds = sigma_next - sigma
             slope = GraphLatent(
                 (xt_c.node - x_hat.node) / sigma[..., None, None],
@@ -135,6 +137,7 @@ class LatentSampler:
                 pair_mask,
                 rng=step_rng,
             )
+            xt_next = symmetrize_latent(xt_next, node_mask, pair_mask)
             if record:
                 match = jnp.where(snapshot_steps == idx, size=1, fill_value=-1)[0][0]
                 snaps = GraphLatent(
