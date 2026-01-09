@@ -22,6 +22,7 @@ class MessagePassingLayer(nn.Module):
     residual_connections: bool = True
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
+    symmetrize: bool = True
 
     @nn.compact
     def __call__(
@@ -68,6 +69,8 @@ class MessagePassingLayer(nn.Module):
             nodes = nodes + nodes_up
         else:
             nodes = nodes_up
+        if self.symmetrize:
+            edges = 0.5 * (edges + edges.swapaxes(-2, -3))
 
         return nodes, edges
 
