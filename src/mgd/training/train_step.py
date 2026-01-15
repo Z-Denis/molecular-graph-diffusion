@@ -64,28 +64,40 @@ class DiffusionTrainState(train_state.TrainState):
 
 def create_train_state(
     model: GraphDiffusionModel,
-    sample_latent,
-    node_mask: jnp.ndarray,
-    pair_mask: jnp.ndarray,
+    batch: GraphBatch,
     tx: optax.GradientTransformation,
     rng: jax.Array,
     *,
     space: DiffusionSpace,
     sigma_sampler: Callable[[jax.Array, tuple, float, float], jnp.ndarray] = sample_sigma,
 ) -> DiffusionTrainState:
-    """Initialize model parameters and return a train state."""
+    """Initialize model parameters from a batch and return a train state."""
+    node_mask = batch.node_mask
+    pair_mask = batch.pair_mask
     rng_params, rng_noise = jax.random.split(rng)
-    sigma0 = jnp.ones((sample_latent.node.shape[0],), dtype=sample_latent.node.dtype)
+
+    dummy_latent = model.denoiser.space.zeros_from_masks(node_mask, pair_mask)
+    sigma0 = jnp.ones((dummy_latent.node.shape[0],), dtype=dummy_latent.node.dtype)
     variables = model.init(
         {"params": rng_params, "noise": rng_noise},
-        sample_latent,
+        dummy_latent,
         sigma0,
         node_mask=node_mask,
         pair_mask=pair_mask,
     )
+    embed_vars = model.init(
+        {"params": rng_params},
+        batch,
+        node_mask=node_mask,
+        pair_mask=pair_mask,
+        method=model.encode,
+    )
+    params = flax.core.unfreeze(variables["params"])
+    params.update(flax.core.unfreeze(embed_vars["params"]))
+    params = flax.core.freeze(params)
     return DiffusionTrainState.create(
         apply_fn=model.apply,
-        params=variables["params"],
+        params=params,
         tx=tx,
         model=model,
         space=space,
