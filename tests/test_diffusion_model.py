@@ -8,6 +8,7 @@ from mgd.diffusion.schedules import make_sigma_schedule
 from mgd.latent import GraphLatentSpace, GraphLatent
 from mgd.model.denoiser import MPNNDenoiser
 from mgd.model.diffusion_model import GraphDiffusionModel
+from mgd.model.embeddings import CategoricalLatentEmbedder
 from mgd.sampling import HeunUpdater, LatentSampler
 from mgd.training.train_step import DiffusionTrainState
 
@@ -42,13 +43,17 @@ def _tiny_batch():
 
 def _tiny_model():
     space = GraphLatentSpace(node_dim=5, edge_dim=4, dtype=jnp.float32)
+    embedder = CategoricalLatentEmbedder(space=space, node_vocab=6, edge_vocab=5)
     denoiser = MPNNDenoiser(
         space=space,
+        node_vocab=6,
+        edge_vocab=5,
         mess_dim=6,
         time_dim=8,
     )
     model = GraphDiffusionModel(
         denoiser=denoiser,
+        embedder=embedder,
         sigma_data_node=1.0,
         sigma_data_edge=1.0,
         sigma_min=0.005,
@@ -86,12 +91,14 @@ def test_training_forward_shapes_and_keys():
         pair_mask=batch.pair_mask,
         rngs={"noise": jax.random.PRNGKey(2)},
     )
-    for key in ("x_hat", "noise", "noisy", "clean"):
+    for key in ("x_hat", "noise", "noisy", "clean", "logits", "probs"):
         assert key in outputs
         assert isinstance(outputs[key].node, jnp.ndarray)
         assert isinstance(outputs[key].edge, jnp.ndarray)
     assert outputs["x_hat"].node.shape == batch.cont.shape[:2] + (space.node_dim,)
     assert outputs["x_hat"].edge.shape == batch.pair_mask.shape + (space.edge_dim,)
+    assert outputs["logits"].node.shape[-1] == 6
+    assert outputs["logits"].edge.shape[-1] == 5
 
 
 def test_sample_masks_and_shapes_reproducible():

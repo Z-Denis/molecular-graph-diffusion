@@ -12,6 +12,7 @@ from flax import linen as nn
 from ..dataset.qm9 import ATOM_VOCAB_SIZE, HYBRID_VOCAB_SIZE, BOND_VOCAB_SIZE
 from ..dataset.utils import GraphBatch
 from ..latent import GraphLatent, GraphLatentSpace
+from ..latent.utils import latent_from_probs, normalize_embeddings
 
 
 class OneHotGraphEmbedder(nn.Module):
@@ -35,6 +36,54 @@ class OneHotGraphEmbedder(nn.Module):
         node_onehot = node_onehot * node_mask[..., None]
         edge_onehot = edge_onehot * pair_mask[..., None]
         return GraphLatent(node=node_onehot, edge=edge_onehot)
+
+
+class CategoricalLatentEmbedder(nn.Module):
+    """Trainable categorical embedder with hypersphere-normalized embeddings."""
+
+    space: GraphLatentSpace
+    node_vocab: int
+    edge_vocab: int
+    eps: float = 1e-8
+    param_dtype: DTypeLike = "float32"
+
+    def setup(self) -> None:
+        self._v_node = self.param(
+            "node_embeddings",
+            nn.initializers.normal(1.0),
+            (self.node_vocab, self.space.node_dim),
+        )
+        self._v_edge = self.param(
+            "edge_embeddings",
+            nn.initializers.normal(1.0),
+            (self.edge_vocab, self.space.edge_dim),
+        )
+
+    def embeddings(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+        node = normalize_embeddings(self._v_node, eps=self.eps)
+        edge = normalize_embeddings(self._v_edge, eps=self.eps)
+        return node, edge
+
+    def __call__(
+        self,
+        node_labels: jnp.ndarray,
+        edge_labels: jnp.ndarray,
+        *,
+        node_mask: jnp.ndarray | None = None,
+        pair_mask: jnp.ndarray | None = None,
+    ) -> GraphLatent:
+        node_emb, edge_emb = self.embeddings()
+        nodes = node_emb[node_labels]
+        edges = edge_emb[edge_labels]
+        if node_mask is not None:
+            nodes = nodes * node_mask[..., None]
+        if pair_mask is not None:
+            edges = edges * pair_mask[..., None]
+        return GraphLatent(node=nodes, edge=edges)
+
+    def probs_to_latent(self, node_probs: jnp.ndarray, edge_probs: jnp.ndarray) -> GraphLatent:
+        node_emb, edge_emb = self.embeddings()
+        return latent_from_probs(node_probs, edge_probs, node_emb, edge_emb)
 
 
 class NodeEmbedder(nn.Module):

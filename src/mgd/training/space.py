@@ -10,14 +10,11 @@ import jax.numpy as jnp
 
 from mgd.dataset.utils import GraphBatch
 from mgd.latent import GraphLatent, GraphLatentSpace, center_logits
-from mgd.training.losses import edm_masked_mse
+from mgd.training.losses import categorical_ce_loss, edm_masked_mse
 
 
 class DiffusionSpace(Protocol):
     """Interface for mapping batches into diffusion space and scoring outputs."""
-
-    def encode(self, batch: GraphBatch) -> GraphLatent:
-        """Encode a batch into diffusion latents."""
 
     def loss(self, outputs: Dict[str, object], batch: GraphBatch) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
         """Compute loss/metrics from model outputs."""
@@ -82,4 +79,30 @@ class OneHotLogitDiffusionSpace:
         return self.loss_fn(x_hat, clean, batch.node_mask, batch.pair_mask, sigma=outputs["sigma"])
 
 
-__all__ = ["DiffusionSpace", "LatentDiffusionSpace", "OneHotLogitDiffusionSpace"]
+@dataclass(frozen=True)
+class CategoricalDiffusionSpace:
+    """Categorical diffusion space using logits and CE losses."""
+
+    loss_fn: Callable[..., Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]] = categorical_ce_loss
+    node_class_weights: jnp.ndarray | None = None
+    edge_class_weights: jnp.ndarray | None = None
+    label_smoothing: float | None = None
+
+    def loss(self, outputs: Dict[str, object], batch: GraphBatch) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+        return self.loss_fn(
+            outputs["logits"],
+            batch,
+            batch.node_mask,
+            batch.pair_mask,
+            node_class_weights=self.node_class_weights,
+            edge_class_weights=self.edge_class_weights,
+            label_smoothing=self.label_smoothing,
+        )
+
+
+__all__ = [
+    "DiffusionSpace",
+    "LatentDiffusionSpace",
+    "OneHotLogitDiffusionSpace",
+    "CategoricalDiffusionSpace",
+]
