@@ -63,7 +63,7 @@ from pathlib import Path
 from functools import partial
 import optax
 
-def make_decoder_lr_schedule():
+def make_lr_schedule():
     return optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=1e-3,
@@ -108,7 +108,7 @@ rng = jax.random.PRNGKey(0)
 batch = next(iter(train_loader))
 tx = optax.chain(
     optax.clip_by_global_norm(1.0),
-    optax.adam(learning_rate=make_decoder_lr_schedule()),
+    optax.adam(learning_rate=make_lr_schedule()),
 )
 
 # Add additional sampling weight at low sigma (optional)
@@ -124,7 +124,7 @@ diff_state = create_train_state(
 )
 
 # Logger/checkpoint setup
-ckpt_dir = Path(f"../checkpoints/diffusion_edm_smin0p01_{n_layers}layer_onehot").resolve()
+ckpt_dir = Path(f"../checkpoints/diffusion_cdcd_smin0p005_{n_layers}layer").resolve()
 logger = Logger(log_every=10, ckpt_dir=ckpt_dir, ckpt_every=1000)
 
 # Train
