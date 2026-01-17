@@ -25,7 +25,7 @@ from typing import Dict, List
 import numpy as np
 from rdkit import Chem
 
-from mgd.dataset import encode_molecule
+from mgd.experimental.dataset import encode_molecule
 
 
 def load_qm9_sdf(path: Path) -> List[Chem.Mol]:
