@@ -13,7 +13,7 @@ from numpy.typing import DTypeLike
 from rdkit import Chem
 
 from mgd.experimental.dataset.utils import GraphBatch
-from mgd.dataset.qm9 import (
+from mgd.experimental.dataset.qm9 import (
     MAX_NODES,
     ATOM_TYPES,
     HYBRIDIZATIONS,

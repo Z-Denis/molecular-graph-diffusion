@@ -9,7 +9,7 @@ import optax
 import jax
 
 from mgd.latent import GraphLatent
-from mgd.dataset.qm9 import VALENCE_TABLE, BOND_ORDERS
+from mgd.experimental.dataset.qm9 import VALENCE_TABLE, BOND_ORDERS
 
 
 def _apply_weights(

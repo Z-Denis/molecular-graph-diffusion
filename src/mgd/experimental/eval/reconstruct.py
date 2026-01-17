@@ -7,7 +7,7 @@ from typing import Iterable, List, Optional
 import numpy as np
 from rdkit import Chem
 
-from mgd.dataset.qm9 import ATOM_TYPES, BOND_TO_ID
+from mgd.experimental.dataset.qm9 import ATOM_TYPES, BOND_TO_ID
 
 # Invert bond mapping (skip "no_bond")
 _ID_TO_BOND = {v: k for k, v in BOND_TO_ID.items()}
