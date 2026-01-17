@@ -15,6 +15,8 @@ from .backbone import MPNNBackbone
 
 class MPNNDenoiser(nn.Module):
     space: GraphLatentSpace
+    node_vocab: int
+    edge_vocab: int
     
     mess_dim: int   # message hidden dim
     time_dim: int   # time hidden dim
@@ -53,12 +55,12 @@ class MPNNDenoiser(nn.Module):
 
         # Latent to noise space
         eps_nodes = nn.Dense(
-            self.space.node_dim, param_dtype=self.param_dtype,
+            self.node_vocab, param_dtype=self.param_dtype,
             kernel_init=nn.initializers.normal(1e-6),
             name="node_head",
         )(nodes)
         eps_edges = nn.Dense(
-            self.space.edge_dim, param_dtype=self.param_dtype,
+            self.edge_vocab, param_dtype=self.param_dtype,
             kernel_init=nn.initializers.normal(1e-6),
             name="edge_head",
         )(edges)

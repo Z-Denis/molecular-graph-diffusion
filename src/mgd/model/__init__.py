@@ -8,6 +8,7 @@ from .denoiser import MPNNDenoiser
 from .embeddings import (
     GraphEmbedder,
     OneHotGraphEmbedder,
+    CategoricalLatentEmbedder,
     NodeEmbedder,
     PairEmbedder,
     TimeEmbedding,
@@ -25,6 +26,7 @@ __all__ = [
     "MPNNDenoiser",
     "GraphEmbedder",
     "OneHotGraphEmbedder",
+    "CategoricalLatentEmbedder",
     "NodeEmbedder",
     "PairEmbedder",
     "TimeEmbedding",

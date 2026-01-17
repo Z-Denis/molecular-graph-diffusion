@@ -1,4 +1,4 @@
-"""Energy-guidance utilities for logit-space diffusion sampling."""
+"""Energy-guidance utilities for categorical-logit diffusion sampling."""
 
 from __future__ import annotations
 
@@ -8,12 +8,13 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from mgd.latent import GraphLatent, center_logits
+from mgd.latent import GraphLatent, center_logits, symmetrize_edge
 from mgd.dataset.qm9 import BOND_ORDERS, VALENCE_TABLE
 
 
 def _edge_probs(edge_logits: jnp.ndarray) -> jnp.ndarray:
     return jax.nn.softmax(edge_logits, axis=-1)
+
 
 def _atom_probs(atom_logits: jnp.ndarray) -> jnp.ndarray:
     return jax.nn.softmax(atom_logits, axis=-1)
@@ -52,15 +53,15 @@ def _expected_aromatic_incidence(
 
 
 def valence_over_penalty(
-    latents: GraphLatent,
+    logits: GraphLatent,
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
     *,
     max_valence: jnp.ndarray = VALENCE_TABLE,
     bond_orders: jnp.ndarray = BOND_ORDERS,
 ) -> jnp.ndarray:
-    v_hat = _expected_bond_order_sum(latents.edge, pair_mask, bond_orders)
-    p_atom = _atom_probs(latents.node)
+    v_hat = _expected_bond_order_sum(logits.edge, pair_mask, bond_orders)
+    p_atom = _atom_probs(logits.node)
     vmax = (p_atom * jnp.asarray(max_valence, dtype=v_hat.dtype)).sum(axis=-1)
     over = jnp.maximum(v_hat - vmax, 0.0)
     mask = node_mask.astype(v_hat.dtype)
@@ -68,25 +69,25 @@ def valence_over_penalty(
 
 
 def degree_mse_penalty(
-    latents: GraphLatent,
+    logits: GraphLatent,
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
     *,
     target_degree: jnp.ndarray,
 ) -> jnp.ndarray:
-    deg_hat = _expected_degree(latents.edge, pair_mask)
+    deg_hat = _expected_degree(logits.edge, pair_mask)
     mask = node_mask.astype(deg_hat.dtype)
     return (jnp.square(deg_hat - target_degree) * mask).sum() / jnp.maximum(mask.sum(), 1.0)
 
 
 def aromatic_coherence_penalty(
-    latents: GraphLatent,
+    logits: GraphLatent,
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
     *,
     aromatic_index: int = 4,
 ) -> jnp.ndarray:
-    d_hat = _expected_aromatic_incidence(latents.edge, pair_mask, aromatic_index)
+    d_hat = _expected_aromatic_incidence(logits.edge, pair_mask, aromatic_index)
     mask = node_mask.astype(d_hat.dtype)
     return (jnp.square(d_hat - 2.0) * mask).sum() / jnp.maximum(mask.sum(), 1.0)
 
@@ -106,19 +107,19 @@ def make_logit_guidance(
     config: LogitGuidanceConfig,
     *,
     weight_fn: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
-) -> Callable[[GraphLatent, jnp.ndarray, jnp.ndarray, jnp.ndarray], GraphLatent]:
+) -> Callable[[dict, jnp.ndarray, jnp.ndarray, jnp.ndarray], GraphLatent]:
     """Return a guidance function to apply to x_hat during sampling."""
 
-    def energy(latents, node_mask, pair_mask):
+    def energy(logits, node_mask, pair_mask):
         if config.gauge_fix:
-            latents = GraphLatent(
-                center_logits(latents.node, node_mask),
-                center_logits(latents.edge, pair_mask),
+            logits = GraphLatent(
+                center_logits(logits.node, node_mask),
+                center_logits(logits.edge, pair_mask),
             )
-        total = jnp.array(0.0, dtype=latents.node.dtype)
+        total = jnp.array(0.0, dtype=logits.node.dtype)
         if config.valence_weight:
             total = total + config.valence_weight * valence_over_penalty(
-                latents,
+                logits,
                 node_mask,
                 pair_mask,
                 max_valence=config.max_valence,
@@ -128,19 +129,22 @@ def make_logit_guidance(
             raise ValueError("degree_weight is not supported without explicit targets.")
         if config.aromatic_weight:
             total = total + config.aromatic_weight * aromatic_coherence_penalty(
-                latents,
+                logits,
                 node_mask,
                 pair_mask,
                 aromatic_index=config.aromatic_index,
             )
         return total
 
-    def guide(x_hat, node_mask, pair_mask, sigma):
+    def guide(pred, node_mask, pair_mask, sigma):
+        logits = pred["logits"]
         w = 1.0 if weight_fn is None else weight_fn(sigma)
         grad_fn = jax.grad(lambda x: energy(x, node_mask, pair_mask))
-        g = grad_fn(x_hat)
+        g = grad_fn(logits)
         sigma2 = jnp.square(sigma)
-        return (x_hat - g * (sigma2 * w)).masked(node_mask, pair_mask)
+        guided = logits - g * (sigma2 * w)
+        guided = GraphLatent(guided.node, symmetrize_edge(guided.edge))
+        return guided.masked(node_mask, pair_mask)
 
     return guide
 
