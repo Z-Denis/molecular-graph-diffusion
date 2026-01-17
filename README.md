@@ -1,14 +1,14 @@
 # Molecular Graph Diffusion (WIP)
 
-This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. It supports two complementary diffusion modes: (i) logit-level diffusion, where continuous-time diffusion is applied directly to node and edge logits as a relaxation of discrete molecular graphs, and (ii) latent-level diffusion, where diffusion operates in the latent space of a graph autoencoder. Both modes are built on a unified Elucidated Diffusion Model (EDM) backbone and share common sampling, guidance, and evaluation infrastructure. The project emphasises careful treatment of categorical variables, entropy and scale control, and inference-time guidance for enforcing soft chemical constraints. 
+This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. The current default is Continuous Diffusion for Categorical Data (CDCD): categorical node/edge types are embedded into a continuous hypersphere space, the backbone predicts logits, and the denoised latent is reconstructed as the probability-weighted embedding average. Sampling uses an EDM-style reverse process, with symmetry enforcement on edge logits and latent states.
+
+Legacy interfaces for logit-level diffusion and autoencoder-based latent diffusion are still present but considered phased out (see the Legacy section below).
 
 The codebase is a research sandbox to investigate the prospects of continuous relaxation of discrete graphs and study how representation choice (logits vs latents) affects stability, validity, and controllability in molecular diffusion models.
 
 ## Related work
 
-This approach combines ideas from continuous-time diffusion models (EDM), discrete graph diffusion, and molecular generative modeling. At the logit level, our method can be interpreted as a continuous relaxation of discrete graph diffusion approaches such as DiGress, replacing categorical transitions with Gaussian diffusion in logit space. Compared to discrete diffusion, this offers greater flexibility for energy-based guidance but requires careful control of entropy, scale, and gauge symmetries.
-
-We also explore latent diffusion via graph autoencoders, following the general philosophy of latent diffusion models, but find that the absence of a canonical Euclidean geometry in graph latents introduces additional challenges compared to image domains.
+This approach combines ideas from continuous-time diffusion models (EDM), discrete graph diffusion, and molecular generative modeling. CDCD can be seen as a continuous relaxation of categorical diffusion, where the network predicts logits over discrete types while diffusion proceeds in a continuous embedding space.
 
 ## Setup
 Create a virtualenv, install dependencies, and install the package in editable mode:
@@ -18,7 +18,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-## Logit-level diffusion
+## CDCD diffusion (current)
 
 First process molecules from the QM9 dataset into dense adjacency format and create training-test splits:
 ```bash
@@ -26,14 +26,13 @@ python3 scripts/preprocess_qm9.py --input data/raw/gdb9.sdf --output data/proces
 python3 scripts/create_splits.py --num_samples 131970 --train_ratio 0.8 --val_ratio 0.1 --test_ratio 0.1 --output data/processed/qm9_splits.npz --seed 42
 ```
 
-This showcases the interface to train a diffusion model operating at logit level:
+This showcases the interface to train a diffusion model operating in CDCD mode:
 ```python
 import jax, numpy as np
 from mgd.dataset import GraphBatchLoader
-from mgd.model import OneHotGraphEmbedder
 from mgd.latent import GraphLatentSpace
-from mgd.model import OneHotAutoencoder
-from mgd.training import OneHotLogitDiffusionSpace
+from mgd.model import CategoricalLatentEmbedder
+from mgd.training import CategoricalDiffusionSpace
 from mgd.dataset.qm9 import BOND_VOCAB_SIZE, ATOM_VOCAB_SIZE
 
 # Data
@@ -43,22 +42,13 @@ data = dict(np.load("../data/processed/qm9_dense.npz"))
 train_loader = GraphBatchLoader(data, indices=splits["train"], batch_size=batch_size, key=jax.random.PRNGKey(0))
 
 # Model
-space = GraphLatentSpace(node_dim=ATOM_VOCAB_SIZE, edge_dim=BOND_VOCAB_SIZE)
-onehot = OneHotGraphEmbedder(space=space)
-ae_model = OneHotAutoencoder(embedder=onehot)
-
-# Diffusion space: choose logit latents
-diff_space = OneHotLogitDiffusionSpace(space=space)
-# Init encoder params and a sample latent
-rng = jax.random.PRNGKey(0)
-batch = next(iter(train_loader))
-enc_vars = onehot.init(rng, batch, batch.node_mask, batch.pair_mask)
-sample_latent = onehot.apply(enc_vars, batch, batch.node_mask, batch.pair_mask)
-# Second atom of the first molecule in the minibatch
-enc_vars, sample_latent.node[0, 1]
-```
-```python-repl
-({}, Array([0., 0., 0., 1., 0., 0.], dtype=float32))
+space = GraphLatentSpace(node_dim=128, edge_dim=128)
+embedder = CategoricalLatentEmbedder(
+    space=space,
+    node_vocab=ATOM_VOCAB_SIZE,
+    edge_vocab=BOND_VOCAB_SIZE,
+)
+diff_space = CategoricalDiffusionSpace()
 ```
 
 ```python
@@ -99,38 +89,34 @@ sigma_min = 0.005 * max(sigma_data_node, sigma_data_edge)
 # Build model
 denoiser = MPNNDenoiser(
     space=space,
+    node_vocab=ATOM_VOCAB_SIZE,
+    edge_vocab=BOND_VOCAB_SIZE,
     mess_dim=mess_dim,
     time_dim=time_dim,   # takes log(sigma)
     n_layers=n_layers,
 )
 diff_model = GraphDiffusionModel(
     denoiser=denoiser,
+    embedder=embedder,
     sigma_data_node=sigma_data_node,
     sigma_data_edge=sigma_data_edge,
     sigma_min=sigma_min,
     sigma_max=sigma_max,
 )
 
-# Init train state
 rng = jax.random.PRNGKey(0)
 batch = next(iter(train_loader))
-enc_vars = onehot.init(rng, batch, batch.node_mask, batch.pair_mask)
-enc_params = enc_vars.get("params", {})  # empty FrozenDict
-init_latent = onehot.apply(enc_vars, batch, batch.node_mask, batch.pair_mask)
-
 tx = optax.chain(
     optax.clip_by_global_norm(1.0),
     optax.adam(learning_rate=make_decoder_lr_schedule()),
 )
 
-# Add additional sampling weight at low sigma
+# Add additional sampling weight at low sigma (optional)
 sigma_sampler = partial(sample_sigma_mixture, p_low=0.3, k=3.0)
 
 diff_state = create_train_state(
     diff_model,
-    init_latent,
-    batch.node_mask,
-    batch.pair_mask,
+    batch,
     tx,
     rng,
     space=diff_space,
@@ -167,7 +153,7 @@ Last metrics: {'edge_loss': Array(0.46702132, dtype=float32), 'loss': Array(1.19
 Once the diffusion model is trained, sampling is performed as follows:
 ```python
 from mgd.dataset.qm9 import MAX_NODES
-from mgd.training import compute_class_weights, compute_occupation_log_weights, mask_logits
+from mgd.training import compute_occupation_log_weights
 from mgd.sampling import LatentSampler, HeunUpdater, LogitGuidanceConfig, make_logit_guidance
 from mgd.sampling.sampler import _prepare_masks
 
@@ -194,10 +180,49 @@ sigma_sched = make_sigma_schedule(
 )
 
 # Prepare sampler
-space = diff_space.space  # latent space used by diffusion space
 sampler = LatentSampler(space=space, state=diff_state, updater=HeunUpdater())
 
-# Sample atom types for guidance (from empirical distribution)
+# Guidance (optional)
+guidance_cfg = LogitGuidanceConfig(valence_weight=2.0, aromatic_weight=0.1)
+guidance_fn = make_logit_guidance(
+    guidance_cfg,
+    weight_fn=lambda s: 10.0 * (1.0 - s / diff_state.model.sigma_max),
+)
+
+# Sample latent embeddings
+rng, sample_rng = jax.random.split(rng)
+latents = sampler.sample(
+    sample_rng,
+    sigma_schedule=sigma_sched,
+    batch_size=batch_size,
+    n_atoms=n_atoms,
+    node_mask=node_mask,
+    pair_mask=pair_mask,
+    max_atoms=max_atoms,
+    guidance_fn=guidance_fn,
+)
+
+# Get logits at sigma_min and decode to discrete types
+sigma0 = jnp.full((batch_size,), diff_state.model.sigma_min, dtype=latents.node.dtype)
+pred = diff_state.denoise(latents, sigma0, node_mask=node_mask, pair_mask=pair_mask)
+logits = pred["logits"]
+edge_logits = symmetrize_edge(logits.edge)
+
+# Careful, this is only shown for simplicity, but argmax decoding is really suboptimal 
+# and typically yields low validity. Instead, one or several passes of a greedy valence 
+# decoder is adviced!
+atom_pred = jnp.argmax(logits.node, axis=-1)
+bond_pred = jnp.argmax(edge_logits, axis=-1) * pair_mask.astype(jnp.int32)
+print("atom_pred:", atom_pred.shape, "bond_pred:", bond_pred.shape)
+```
+
+## Legacy interfaces (phased out)
+
+The following APIs are still present but no longer the default path:
+- Logit-level diffusion via `OneHotLogitDiffusionSpace`.
+- Autoencoder latent diffusion (`OneHotAutoencoder` and related training utilities).
+
+They remain for historical experiments but may be removed or refactored in future work.
 _, atom_counts = compute_class_weights(
     train_loader,
     ATOM_VOCAB_SIZE,

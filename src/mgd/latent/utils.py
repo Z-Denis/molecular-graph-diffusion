@@ -7,6 +7,30 @@ import jax.numpy as jnp
 from mgd.latent.space import GraphLatent
 
 
+def normalize_embeddings(vectors: jnp.ndarray, eps: float = 1e-8) -> jnp.ndarray:
+    """Normalize embeddings to a radius sqrt(d) hypersphere."""
+    dim = vectors.shape[-1]
+    norm = jnp.linalg.norm(vectors, axis=-1, keepdims=True)
+    return jnp.sqrt(dim) * vectors / (norm + eps)
+
+
+def weighted_embeddings(probs: jnp.ndarray, embeddings: jnp.ndarray) -> jnp.ndarray:
+    """Compute probability-weighted embeddings."""
+    return jnp.einsum("...k,kd->...d", probs, embeddings)
+
+
+def latent_from_probs(
+    node_probs: jnp.ndarray,
+    edge_probs: jnp.ndarray,
+    node_embeddings: jnp.ndarray,
+    edge_embeddings: jnp.ndarray,
+) -> GraphLatent:
+    """Map categorical probabilities to expected latent embeddings."""
+    node = weighted_embeddings(node_probs, node_embeddings)
+    edge = weighted_embeddings(edge_probs, edge_embeddings)
+    return GraphLatent(node=node, edge=edge)
+
+
 def center_logits(logits: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
     """Center logits per node/edge across classes using the provided mask."""
     weights = mask[..., None]
