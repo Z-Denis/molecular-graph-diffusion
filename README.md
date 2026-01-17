@@ -182,7 +182,7 @@ sigma_sched = make_sigma_schedule(
 # Prepare sampler
 sampler = LatentSampler(space=space, state=diff_state, updater=HeunUpdater())
 
-# Guidance (optional)
+# Soft guidance (optional)
 guidance_cfg = LogitGuidanceConfig(valence_weight=2.0, aromatic_weight=0.1)
 guidance_fn = make_logit_guidance(
     guidance_cfg,
@@ -219,59 +219,7 @@ print("atom_pred:", atom_pred.shape, "bond_pred:", bond_pred.shape)
 ## Legacy interfaces (phased out)
 
 The following APIs are still present but no longer the default path:
-- Logit-level diffusion via `OneHotLogitDiffusionSpace`.
-- Autoencoder latent diffusion (`OneHotAutoencoder` and related training utilities).
-
-They remain for historical experiments but may be removed or refactored in future work.
-_, atom_counts = compute_class_weights(
-    train_loader,
-    ATOM_VOCAB_SIZE,
-    pad_value=0,
-    return_counts=True,
-)
-atom_probs = jnp.asarray(atom_counts / atom_counts.sum())
-
-# Setup soft guidance
-guidance_cfg = LogitGuidanceConfig(valence_weight=2.0, aromatic_weight=0.1)
-guidance_fn = make_logit_guidance(
-    guidance_cfg,
-    weight_fn = lambda s: 2.0 * (1.0 - s / diff_state.model.sigma_max),
-)
-
-# Sample latents
-rng, sample_rng = jax.random.split(rng)
-latents = sampler.sample(
-    sample_rng,
-    sigma_schedule=sigma_sched,
-    batch_size=batch_size,
-    n_atoms=n_atoms,
-    node_mask=node_mask,
-    pair_mask=pair_mask,
-    max_atoms=max_atoms,
-    guidance_fn=guidance_fn,
-)
-
-# Symmetrise edges
-latents_edge = 0.5 * (latents.edge + latents.edge.swapaxes(-2, -3))
-
-# Convert logits to discrete predictions
-recon = {"node": latents.node, "edge": latents_edge}
-# recon["node"]: (B, N, n_atom_types), recon["edge"]: (B, N, N, 1+n_bond_types)
-atom_logits = mask_logits(recon["node"], node_mask, 0)
-atom_pred = jnp.argmax(atom_logits, axis=-1)            # (B, N)
-bond_pred = jnp.argmax(recon["edge"], axis=-1)        # class 0 == no bond
-bond_pred = bond_pred * pair_mask.astype(bond_pred.dtype)
-
-print("atom_pred shape:", atom_pred.shape)
-print("bond_pred shape:", bond_pred.shape)
-```
-```python-repl
-atom_pred shape: (1024, 29)
-bond_pred shape: (1024, 29, 29)
-```
-
-## Latent-level diffusion
-
-This involves an extra step, where an autoencoder is trained as to produce smooth latents in a space of desired dimension. The decoder decodes these latents into a set of logits. In particular, for bonds, we predict one extra logit that determines the probability of existence of a bond of any type between any two atoms; this masks the bond-type predictions made from the usual logits.
+- Logit-level diffusion via `OneHotLogitDiffusionSpace`. Similar to the above but where diffusion happens directly in logit space, without any form of learnt embedding.
+- Autoencoder latent diffusion (`OneHotAutoencoder` and related training utilities). This involves an extra step, where an autoencoder is trained as to produce smooth latents in a space of desired dimension. The decoder decodes these latents into a set of logits. In particular, for bonds, we predict one extra logit that determines the probability of existence of a bond of any type between any two atoms; this masks the bond-type predictions made from the usual logits.
 
 This procedure generically leads to the collapse of the latent space into a sharp low-dimensional manifold that breaks diffusion. To mitigate it, the autoencoder is trained under strong noise injection at the latent level. In practice, the magnitude of the noise is chosen as large as possible while ensuring that the trained denoising autoencoder is able to achieve perfect F1 scores for both atom and bond types. Early stopping is also enforced with the same condition.
