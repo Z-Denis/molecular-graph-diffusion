@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterator
+from typing import Dict, Iterator, Optional, Sequence
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from mgd.dataset.utils import GraphBatch
+from mgd.experimental.dataset.utils import GraphBatch
 
 
 class GraphBatchLoader:
@@ -22,6 +22,15 @@ class GraphBatchLoader:
         shuffle: Whether to shuffle each pass.
         stop_gradient: If True, stop gradients on batch tensors.
         n_batches: Optional finite number of batches to yield; None for infinite stream.
+
+    Example:
+        >>> import jax, numpy as np
+        >>> splits = dict(np.load("data/processed/qm9_splits.npz"))
+        >>> data = dict(np.load("data/processed/qm9_dense.npz"))
+        >>> loader = GraphBatchLoader(data, indices=splits["train"], batch_size=64, key=jax.random.PRNGKey(0))
+        >>> batch = next(iter(loader))
+        >>> batch.node_mask.shape
+        (64, 29)
     """
 
     def __init__(
@@ -34,7 +43,7 @@ class GraphBatchLoader:
         stop_gradient: bool = True,
         n_batches: int | None = None,
     ) -> None:
-        required = ["atom_type", "bond_type", "node_mask", "pair_mask"]
+        required = ["atom_ids", "hybrid_ids", "node_continuous", "bond_types", "dknn", "node_mask", "pair_mask"]
         missing = [k for k in required if k not in data]
         if missing:
             raise KeyError(f"Missing required keys in data: {missing}. Provided keys: {list(data.keys())}")
@@ -45,12 +54,13 @@ class GraphBatchLoader:
         self._key = key
         self._stop_gradient = stop_gradient
         self._n_batches = n_batches
-
+        
         for name, arr in self.data.items():
             if arr.shape[0] <= int(self.indices.max()):
                 raise ValueError(
                     f"Array '{name}' has leading dim {arr.shape[0]} but indices include up to {int(self.indices.max())}"
                 )
+        
 
     def __len__(self) -> int:
         """Approximate number of batches per pass (or the fixed limit if set)."""
@@ -86,12 +96,16 @@ class GraphBatchLoader:
 
 
 def _to_graph_batch(batch: Dict[str, jnp.ndarray]) -> GraphBatch:
-    return GraphBatch(
-        atom_type=batch["atom_type"],
-        bond_type=batch["bond_type"],
+    graph = GraphBatch(
+        atom_type=batch["atom_ids"],
+        hybrid=batch["hybrid_ids"],
+        cont=batch["node_continuous"],
+        bond_type=batch["bond_types"],
+        dknn=batch["dknn"],
         node_mask=batch["node_mask"],
         pair_mask=batch["pair_mask"],
     )
+    return graph
 
 
 __all__ = ["GraphBatchLoader"]

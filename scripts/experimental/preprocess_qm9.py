@@ -1,4 +1,4 @@
-"""Preprocess QM9 into dense adjacency tensors with explicit hydrogens.
+"""Preprocess QM9 into dense adjacency tensors with explicit hydrogens (legacy).
 
 For each molecule, produce fixed-size arrays (max_nodes=29):
 - Categorical atoms/hybridizations (integer ids).

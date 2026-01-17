@@ -6,7 +6,6 @@ from .guidance import (
     make_logit_guidance,
     valence_over_penalty,
     degree_mse_penalty,
-    aromatic_coherence_penalty,
 )
 from .updater import HeunUpdater
 
@@ -17,5 +16,4 @@ __all__ = [
     "make_logit_guidance",
     "valence_over_penalty",
     "degree_mse_penalty",
-    "aromatic_coherence_penalty",
 ]

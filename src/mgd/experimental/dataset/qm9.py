@@ -1,4 +1,4 @@
-"""QM9-specific categorical vocabularies and feature tables."""
+"""QM9-specific categorical vocabularies and feature tables (legacy)."""
 
 from __future__ import annotations
 
@@ -32,14 +32,15 @@ BOND_TO_ID = {
     Chem.BondType.SINGLE: 1,
     Chem.BondType.DOUBLE: 2,
     Chem.BondType.TRIPLE: 3,
+    Chem.BondType.AROMATIC: 4,
 }
 
 # Valence lookup aligned with ATOM_TO_ID (index 0 is pad/unknown).
 VALENCE_TABLE = np.array([0, 1, 4, 3, 2, 1], dtype=np.float32)  # pad, H, C, N, O, F
 
 BOND_ORDERS = np.array(
-    [0.0, 1.0, 2.0, 3.0], dtype=np.float32
-)  # pad/no-bond, single, double, triple (kekulized)
+    [0.0, 1.0, 2.0, 3.0, 1.5], dtype=np.float32
+)  # pad/no-bond, single, double, triple, aromatic
 
 ATOM_VOCAB_SIZE = len(ATOM_TYPES) + 1
 HYBRID_VOCAB_SIZE = len(HYBRIDIZATIONS) + 1
