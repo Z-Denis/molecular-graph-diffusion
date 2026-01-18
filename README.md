@@ -43,12 +43,17 @@ data = dict(np.load("../data/processed/qm9_dense.npz"))
 train_loader = GraphBatchLoader(data, indices=splits["train"], batch_size=batch_size, key=jax.random.PRNGKey(0))
 
 # Model
+# Latent space: captures its dimensionality and methods to produce 
+# random latents. Similar in spirit to NetKet's `hilbert`
 space = GraphLatentSpace(node_dim=128, edge_dim=128)
 embedder = CategoricalLatentEmbedder(
     space=space,
     node_vocab=ATOM_VOCAB_SIZE,
     edge_vocab=BOND_VOCAB_SIZE,
 )
+# Type of latent space: captures the type of diffusion (logit, latent, 
+# CDCD) and the associated loss. Useful when trying experimental 
+# diffusion schemes
 diff_space = CategoricalDiffusionSpace()
 ```
 
@@ -75,29 +80,31 @@ def make_lr_schedule():
 
 # Hyperparameters
 lr = 5e-4
-mess_dim = 256 // 2
-time_dim = 256 // 2
-node_count_dim = 256 // 2
+mess_dim = 256 // 2  # Message dimension
+time_dim = 256 // 2  # log(sigma) embedding dimension 
+node_count_dim = 256 // 2  # Molecule-size embedding dimension
 n_layers = 4
 rho = 7.0
 num_steps = 40
 
 # Sigma scales from latent stats (masked RMS from the AE)
-sigma_data_node = 1.0#float(jnp.linalg.norm(ae_state.latent_std["node"]) / jnp.sqrt(ae_state.latent_std["node"].size))
-sigma_data_edge = 1.0#float(jnp.linalg.norm(ae_state.latent_std["edge"]) / jnp.sqrt(ae_state.latent_std["edge"].size))
+sigma_data_node = 1.0  # Should be adapted to the data's sigma
+sigma_data_edge = 1.0  # Should be adapted to the data's sigma
 sigma_max = 8.0 * max(sigma_data_node, sigma_data_edge)
 sigma_min = 0.005 * max(sigma_data_node, sigma_data_edge)
 
 # Build model
+# Backbone
 denoiser = MPNNDenoiser(
     space=space,
     node_vocab=ATOM_VOCAB_SIZE,
     edge_vocab=BOND_VOCAB_SIZE,
     mess_dim=mess_dim,
-    time_dim=time_dim,   # takes log(sigma)
+    time_dim=time_dim,   # log(sigma)
     node_count_dim=node_count_dim,
     n_layers=n_layers,
 )
+# Diffusion model
 diff_model = GraphDiffusionModel(
     denoiser=denoiser,
     embedder=embedder,
@@ -108,7 +115,7 @@ diff_model = GraphDiffusionModel(
 )
 
 rng = jax.random.PRNGKey(0)
-batch = next(iter(train_loader))
+batch = next(iter(train_loader))  # dummy batch
 tx = optax.chain(
     optax.clip_by_global_norm(1.0),
     optax.adam(learning_rate=make_lr_schedule()),
@@ -119,7 +126,7 @@ sigma_sampler = partial(sample_sigma_mixture, p_low=0.3, k=3.0)
 
 diff_state = create_train_state(
     diff_model,
-    batch,
+    batch,  # Necessary to initialise the model's weights
     tx,
     rng,
     space=diff_space,
@@ -163,8 +170,6 @@ from mgd.sampling.sampler import _prepare_masks
 # Config
 batch_size = 1024
 max_atoms = MAX_NODES
-rho = 7.0
-num_steps = 40
 rng = jax.random.PRNGKey(0)
 
 # Generate random molecule sizes (n_atoms) for each element of the batch with the
@@ -174,19 +179,11 @@ rng, rng_size = jax.random.split(rng)
 n_atoms = jax.random.categorical(rng_size, occup_log_weights, shape=(batch_size,))
 _, _, node_mask, pair_mask = _prepare_masks(n_atoms, batch_size, space.dtype, None, None, max_atoms=MAX_NODES)
 
-# Build sigma schedule
-sigma_sched = make_sigma_schedule(
-    diff_state.model.sigma_min,
-    diff_state.model.sigma_max,
-    rho=rho,
-    num_steps=num_steps,
-)
-
 # Prepare sampler
 sampler = LatentSampler(space=space, state=diff_state, updater=HeunUpdater())
 
 # Soft guidance (optional)
-guidance_cfg = LogitGuidanceConfig(valence_weight=2.0)
+guidance_cfg = LogitGuidanceConfig(valence_weight=1.0)
 guidance_fn = make_logit_guidance(
     guidance_cfg,
     weight_fn=lambda s: 10.0 * (1.0 - s / diff_state.model.sigma_max),
@@ -205,7 +202,7 @@ latents = sampler.sample(
     guidance_fn=guidance_fn,
 )
 
-# Get logits at sigma_min and decode to discrete types
+# Get logits at sigma_min and decode to discrete types (TODO: improve interface)
 sigma0 = jnp.full((batch_size,), diff_state.model.sigma_min, dtype=latents.node.dtype)
 pred = diff_state.denoise(latents, sigma0, node_mask=node_mask, pair_mask=pair_mask)
 logits = pred["logits"]
