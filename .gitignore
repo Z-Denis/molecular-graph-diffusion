@@ -12,6 +12,7 @@ checkpoints/
 data/raw/
 data/processed/
 outputs/
+configs/
 
 # Notebooks
 *.ipynb_checkpoints/
