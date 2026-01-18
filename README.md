@@ -8,7 +8,7 @@ The codebase is a research sandbox to investigate the prospects of continuous re
 
 ## Related work
 
-This approach combines ideas from continuous-time diffusion models (EDM), discrete graph diffusion, and molecular generative modeling. CDCD can be seen as a continuous relaxation of categorical diffusion, where the network predicts logits over discrete types while diffusion proceeds in a continuous embedding space. It is also aligned with DiGress-style modeling choices (kekulized bonds, explicit size conditioning if desired).
+This approach combines ideas from continuous-time diffusion models (EDM), discrete graph diffusion, and molecular generative modeling. CDCD can be seen as a continuous relaxation of categorical diffusion, where the network predicts logits over discrete types while diffusion proceeds in a continuous embedding space. It is also aligned with DiGress-style modeling choices (kekulized bonds, explicit size conditioning if desired), except for a notable difference: the use of explicit hydrogens.
 
 ## Setup
 Create a virtualenv, install dependencies, and install the package in editable mode:
@@ -207,14 +207,83 @@ sigma0 = jnp.full((batch_size,), diff_state.model.sigma_min, dtype=latents.node.
 pred = diff_state.denoise(latents, sigma0, node_mask=node_mask, pair_mask=pair_mask)
 logits = pred["logits"]
 edge_logits = symmetrize_edge(logits.edge)
+````
 
-# Careful, this is only shown for simplicity, but argmax decoding is really suboptimal 
-# and typically yields low validity. Instead, one or several passes of a greedy valence 
-# decoder is adviced!
+Upon argmax decoding atom types, bonds can be decoded through a two-pass greedy algorithm:
+```python
+from mgd.eval import decode_greedy_valence_batch, build_molecule_and_check
+
 atom_pred = jnp.argmax(logits.node, axis=-1)
-bond_pred = jnp.argmax(edge_logits, axis=-1) * pair_mask.astype(jnp.int32)
-print("atom_pred:", atom_pred.shape, "bond_pred:", bond_pred.shape)
+
+bond_pred = decode_greedy_valence_batch(
+    edge_logits,
+    atom_pred,
+    batch.node_mask,
+    batch.pair_mask,
+)
+
+mols = []
+for i in range(n_molecules):
+    valid, result = build_molecule_and_check(atom_pred[i], bond_pred[i], batch.node_mask[i])
+    if valid:
+        mols.append(result)
+    else:
+        print("Invalid molecule: ", str(Chem.MolToSmiles(mol)))
+print("n_valid / n_molecules = ", len(mols) / batch_size)
 ```
+```python-repl
+[22:02:32] Explicit valence for atom # 11 H, 2, is greater than permitted
+Invalid molecule:  [H]OC1=C(O[H])C([H])(C([H])([H])[H])C([H])(C([H])(O[H])N([H])[H])N1[H]
+n_valid / n_molecules =  0.984375
+```
+
+We may plot some molecule and perform some minimal checks beyond RDKit validity:
+```python
+# pick a molecule of decent size
+mol = mols[12]
+
+Draw.MolToImage(mol)
+```
+![plot](./img/molecule_imp.png)
+
+```python
+from rdkit.Chem import AllChem
+
+mol = Chem.AddHs(mol)
+
+params = AllChem.ETKDGv3()
+params.randomSeed = 0
+
+# minimal checks on geometry
+ok = AllChem.EmbedMolecule(mol, params)
+if ok != 0:
+    raise RuntimeError("3D embedding failed")
+
+# minimal checks on energy
+mmff_props = AllChem.MMFFGetMoleculeProperties(mol, mmffVariant="MMFF94")
+if mmff_props is None:
+    raise RuntimeError("MMFF parameters unavailable")
+ff = AllChem.MMFFGetMoleculeForceField(mol, mmff_props)
+energy = ff.CalcEnergy()
+
+print("MMFF energy:", energy)
+
+res = AllChem.MMFFOptimizeMolecule(
+    mol,
+    maxIters=200,
+    nonBondedThresh=100.0,
+)
+print("MMFFOptimizeMolecule return:", res)
+
+heavy = mol.GetNumHeavyAtoms()
+print("E / heavy atom:", energy / heavy)
+```
+```python-repl
+MMFF energy: -16.104065409920615
+MMFFOptimizeMolecule return: 0
+E / heavy atom: -1.4640059463564195
+```
+Seems reasonable! :)
 
 ## Legacy interfaces (phased out)
 
