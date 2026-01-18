@@ -1,10 +1,10 @@
 # Molecular Graph Diffusion (WIP)
 
-This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. The current default is Continuous Diffusion for Categorical Data (CDCD): categorical node/edge types are embedded into a continuous hypersphere space, the backbone predicts logits, and the denoised latent is reconstructed as the probability-weighted embedding average. Sampling uses an EDM-style reverse process, with symmetry enforcement on edge logits and latent states. This continuous relaxation lets us apply smooth guidance terms (e.g., expected valence) directly in the denoising process.
+This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. The codebase is a research sandbox to investigate the prospects of continuous relaxation of discrete graphs and study how representation choice (logits vs latents) affects stability, validity, and controllability in molecular diffusion models.
+
+The current default is Continuous Diffusion for Categorical Data (CDCD): categorical node/edge types are embedded into a continuous hypersphere space, the backbone predicts logits, and the denoised latent is reconstructed as the probability-weighted embedding average. Sampling uses an EDM-style reverse process, with symmetry enforcement on edge logits and latent states. This continuous relaxation lets us apply smooth guidance terms (e.g., expected valence) directly in the denoising process.
 
 Legacy interfaces for logit-level diffusion and autoencoder-based latent diffusion are still present but considered phased out (see the Legacy section below). Contrary to the legacy logic, aromaticity bond hints are no longer outputted, relying uniquely on kekulisation.
-
-The codebase is a research sandbox to investigate the prospects of continuous relaxation of discrete graphs and study how representation choice (logits vs latents) affects stability, validity, and controllability in molecular diffusion models.
 
 ## Related work
 
