@@ -20,8 +20,9 @@ pip install -e .
 
 ## CDCD diffusion (current)
 
-First process molecules from the QM9 dataset into dense adjacency format and create training-test splits:
+First download QM9, process molecules into dense adjacency format, and create training-test splits:
 ```bash
+python data/download_qm9.py --output data/raw
 python3 scripts/preprocess_qm9.py --input data/raw/gdb9.sdf --output data/processed/qm9_dense.npz --dtype float32
 python3 scripts/create_splits.py --num_samples 131970 --train_ratio 0.8 --val_ratio 0.1 --test_ratio 0.1 --output data/processed/qm9_splits.npz --seed 42
 ```
@@ -76,6 +77,7 @@ def make_lr_schedule():
 lr = 5e-4
 mess_dim = 256 // 2
 time_dim = 256 // 2
+node_count_dim = 256 // 2
 n_layers = 4
 rho = 7.0
 num_steps = 40
@@ -93,6 +95,7 @@ denoiser = MPNNDenoiser(
     edge_vocab=BOND_VOCAB_SIZE,
     mess_dim=mess_dim,
     time_dim=time_dim,   # takes log(sigma)
+    node_count_dim=node_count_dim,
     n_layers=n_layers,
 )
 diff_model = GraphDiffusionModel(
