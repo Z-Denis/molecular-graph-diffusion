@@ -10,6 +10,7 @@ from flax import linen as nn
 
 from ..latent import GraphLatent, GraphLatentSpace
 from ..latent.utils import latent_from_probs, normalize_embeddings
+from ..dataset.qm9 import MAX_NODES
 
 
 class CategoricalLatentEmbedder(nn.Module):
@@ -94,8 +95,37 @@ class TimeEmbedding(nn.Module):
         return t_nodes, t_edges
 
 
+class NodeCountEmbedding(nn.Module):
+    embed_dim: int
+    node_dim: int
+    edge_dim: int
+    max_nodes: int = MAX_NODES
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
+    param_dtype: DTypeLike = "float32"
+
+    @nn.compact
+    def __call__(self, n_nodes: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        n_nodes = jnp.asarray(n_nodes, dtype=jnp.int32)
+        n_nodes = jnp.clip(n_nodes, 0, self.max_nodes)
+
+        emb = nn.Embed(
+            num_embeddings=self.max_nodes + 1,
+            features=self.embed_dim,
+            param_dtype=self.param_dtype,
+        )(n_nodes)
+
+        h = nn.Dense(self.embed_dim, param_dtype=self.param_dtype)(emb)
+        h = self.activation(h)
+
+        n_nodes_nodes = nn.Dense(self.node_dim, param_dtype=self.param_dtype)(h)
+        n_nodes_edges = nn.Dense(self.edge_dim, param_dtype=self.param_dtype)(h)
+
+        return n_nodes_nodes, n_nodes_edges
+
+
 __all__ = [
     "CategoricalLatentEmbedder",
     "sinusoidal_time_embedding",
     "TimeEmbedding",
+    "NodeCountEmbedding",
 ]

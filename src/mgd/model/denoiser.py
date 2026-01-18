@@ -20,6 +20,7 @@ class MPNNDenoiser(nn.Module):
     
     mess_dim: int   # message hidden dim
     time_dim: int   # time hidden dim
+    node_count_dim: int | None = None
 
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     n_layers: int = 1
@@ -38,6 +39,7 @@ class MPNNDenoiser(nn.Module):
             space=self.space,
             mess_dim=self.mess_dim,
             time_dim=self.time_dim,
+            node_count_dim=self.node_count_dim,
             activation=self.activation,
             param_dtype=self.param_dtype,
             n_layers=self.n_layers,

@@ -2,7 +2,12 @@
 
 from .diffusion_model import GraphDiffusionModel
 from .denoiser import MPNNDenoiser
-from .embeddings import CategoricalLatentEmbedder, TimeEmbedding, sinusoidal_time_embedding
+from .embeddings import (
+    CategoricalLatentEmbedder,
+    TimeEmbedding,
+    NodeCountEmbedding,
+    sinusoidal_time_embedding,
+)
 from .gnn_layers import MessagePassingLayer
 from ..latent import GraphLatent
 
@@ -11,6 +16,7 @@ __all__ = [
     "MPNNDenoiser",
     "CategoricalLatentEmbedder",
     "TimeEmbedding",
+    "NodeCountEmbedding",
     "sinusoidal_time_embedding",
     "MessagePassingLayer",
     "GraphLatent",
