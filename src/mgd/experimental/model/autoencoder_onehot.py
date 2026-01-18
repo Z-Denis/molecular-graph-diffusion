@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import flax.linen as nn
 from mgd.latent import GraphLatent
-from mgd.model.embeddings import OneHotGraphEmbedder
-from mgd.dataset.utils import GraphBatch
+from mgd.experimental.model.embeddings import OneHotGraphEmbedder
+from mgd.experimental.dataset.utils import GraphBatch
 
 
 class OneHotAutoencoder(nn.Module):

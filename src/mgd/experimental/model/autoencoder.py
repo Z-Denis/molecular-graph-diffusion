@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from flax import linen as nn
 
-from mgd.dataset.utils import GraphBatch
+from mgd.experimental.dataset.utils import GraphBatch
 from mgd.latent import GraphLatent
-from mgd.model.embeddings import GraphEmbedder
-from mgd.model.decoder import GraphDecoder
+from mgd.experimental.model.embeddings import GraphEmbedder
+from mgd.experimental.model.decoder import GraphDecoder
 
 
 class GraphAutoencoder(nn.Module):

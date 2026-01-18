@@ -7,10 +7,7 @@ from mgd.training.utils import compute_occupation_log_weights
 def test_compute_occupation_log_weights():
     batch = GraphBatch(
         atom_type=np.zeros((2, 4), dtype=np.int32),
-        hybrid=np.zeros((2, 4), dtype=np.int32),
-        cont=np.zeros((2, 4, 1), dtype=np.float32),
         bond_type=np.zeros((2, 4, 4), dtype=np.int32),
-        dknn=np.zeros((2, 4, 4, 1), dtype=np.float32),
         node_mask=np.array([[1, 1, 0, 0], [1, 1, 1, 0]], dtype=np.float32),
         pair_mask=np.ones((2, 4, 4), dtype=np.float32),
     )

@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 
 from mgd.training.losses import masked_cross_entropy
-from mgd.training.losses import graph_reconstruction_loss, bond_reconstruction_loss
+from mgd.experimental.training.losses import graph_reconstruction_loss, bond_reconstruction_loss
 
 
 def test_masked_cross_entropy_node_only():

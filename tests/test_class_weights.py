@@ -8,10 +8,7 @@ def test_compute_class_weights_masks_padding():
     # labels: two batches, with padding label=0
     batch = GraphBatch(
         atom_type=np.array([[0, 1, 2], [0, 1, 1]], dtype=np.int32),
-        hybrid=np.zeros((2, 3), dtype=np.int32),
-        cont=np.zeros((2, 3, 1), dtype=np.float32),
         bond_type=np.zeros((2, 3, 3), dtype=np.int32),
-        dknn=np.zeros((2, 3, 3, 1), dtype=np.float32),
         node_mask=np.ones((2, 3), dtype=np.float32),
         pair_mask=np.ones((2, 3, 3), dtype=np.float32),
     )

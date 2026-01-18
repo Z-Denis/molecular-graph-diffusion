@@ -24,18 +24,12 @@ class _DummySpace:
 def _tiny_batch():
     # Two graphs, three nodes (third node is padded)
     atom_type = jnp.array([[1, 2, 0], [0, 1, 0]], dtype=jnp.int32)
-    hybrid = jnp.zeros_like(atom_type)
-    cont = jnp.zeros((2, 3, 1), dtype=jnp.float32)
     edge_type = jnp.zeros((2, 3, 3), dtype=jnp.int32)
-    dknn = jnp.zeros((2, 3, 3, 1), dtype=jnp.float32)
     node_mask = (atom_type > 0).astype(jnp.float32)
     pair_mask = (node_mask[..., :, None] * node_mask[..., None, :]).astype(jnp.float32)
     return GraphBatch(
         atom_type=atom_type,
-        hybrid=hybrid,
-        cont=cont,
         bond_type=edge_type,
-        dknn=dknn,
         node_mask=node_mask,
         pair_mask=pair_mask,
     )
@@ -78,7 +72,7 @@ def test_training_forward_shapes_and_keys():
     space, model = _tiny_model()
     rng = {"params": jax.random.PRNGKey(0), "noise": jax.random.PRNGKey(1)}
     latents = GraphLatent(
-        jax.random.normal(jax.random.PRNGKey(123), batch.cont.shape[:2] + (space.node_dim,)),
+        jax.random.normal(jax.random.PRNGKey(123), batch.atom_type.shape + (space.node_dim,)),
         jax.random.normal(jax.random.PRNGKey(456), batch.pair_mask.shape + (space.edge_dim,)),
     )
     sigma = jnp.array([0.5, 0.7], dtype=jnp.float32)
@@ -95,7 +89,7 @@ def test_training_forward_shapes_and_keys():
         assert key in outputs
         assert isinstance(outputs[key].node, jnp.ndarray)
         assert isinstance(outputs[key].edge, jnp.ndarray)
-    assert outputs["x_hat"].node.shape == batch.cont.shape[:2] + (space.node_dim,)
+    assert outputs["x_hat"].node.shape == batch.atom_type.shape + (space.node_dim,)
     assert outputs["x_hat"].edge.shape == batch.pair_mask.shape + (space.edge_dim,)
     assert outputs["logits"].node.shape[-1] == 6
     assert outputs["logits"].edge.shape[-1] == 5
@@ -106,7 +100,7 @@ def test_sample_masks_and_shapes_reproducible():
     space, model = _tiny_model()
     rngs = {"params": jax.random.PRNGKey(0), "noise": jax.random.PRNGKey(1)}
     latents = GraphLatent(
-        jax.random.normal(jax.random.PRNGKey(123), batch.cont.shape[:2] + (space.node_dim,)),
+        jax.random.normal(jax.random.PRNGKey(123), batch.atom_type.shape + (space.node_dim,)),
         jax.random.normal(jax.random.PRNGKey(456), batch.pair_mask.shape + (space.edge_dim,)),
     )
     sigma = jnp.array([0.5, 0.7], dtype=jnp.float32)
