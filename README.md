@@ -1,14 +1,14 @@
 # Molecular Graph Diffusion (WIP)
 
-This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. The current default is Continuous Diffusion for Categorical Data (CDCD): categorical node/edge types are embedded into a continuous hypersphere space, the backbone predicts logits, and the denoised latent is reconstructed as the probability-weighted embedding average. Sampling uses an EDM-style reverse process, with symmetry enforcement on edge logits and latent states.
+This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. The current default is Continuous Diffusion for Categorical Data (CDCD): categorical node/edge types are embedded into a continuous hypersphere space, the backbone predicts logits, and the denoised latent is reconstructed as the probability-weighted embedding average. Sampling uses an EDM-style reverse process, with symmetry enforcement on edge logits and latent states. This continuous relaxation lets us apply smooth guidance terms (e.g., expected valence) directly in the denoising process.
 
-Legacy interfaces for logit-level diffusion and autoencoder-based latent diffusion are still present but considered phased out (see the Legacy section below).
+Legacy interfaces for logit-level diffusion and autoencoder-based latent diffusion are still present but considered phased out (see the Legacy section below). Contrary to the legacy logic, aromaticity bond hints are no longer outputted, relying uniquely on kekulisation.
 
 The codebase is a research sandbox to investigate the prospects of continuous relaxation of discrete graphs and study how representation choice (logits vs latents) affects stability, validity, and controllability in molecular diffusion models.
 
 ## Related work
 
-This approach combines ideas from continuous-time diffusion models (EDM), discrete graph diffusion, and molecular generative modeling. CDCD can be seen as a continuous relaxation of categorical diffusion, where the network predicts logits over discrete types while diffusion proceeds in a continuous embedding space.
+This approach combines ideas from continuous-time diffusion models (EDM), discrete graph diffusion, and molecular generative modeling. CDCD can be seen as a continuous relaxation of categorical diffusion, where the network predicts logits over discrete types while diffusion proceeds in a continuous embedding space. It is also aligned with DiGress-style modeling choices (kekulized bonds, explicit size conditioning if desired).
 
 ## Setup
 Create a virtualenv, install dependencies, and install the package in editable mode:
@@ -22,7 +22,7 @@ pip install -e .
 
 First process molecules from the QM9 dataset into dense adjacency format and create training-test splits:
 ```bash
-python3 scripts/preprocess_qm9.py --input data/raw/gdb9.sdf --output data/processed/qm9_dense.npz --dtype float32 --feature_style separate
+python3 scripts/preprocess_qm9.py --input data/raw/gdb9.sdf --output data/processed/qm9_dense.npz --dtype float32
 python3 scripts/create_splits.py --num_samples 131970 --train_ratio 0.8 --val_ratio 0.1 --test_ratio 0.1 --output data/processed/qm9_splits.npz --seed 42
 ```
 
@@ -183,7 +183,7 @@ sigma_sched = make_sigma_schedule(
 sampler = LatentSampler(space=space, state=diff_state, updater=HeunUpdater())
 
 # Soft guidance (optional)
-guidance_cfg = LogitGuidanceConfig(valence_weight=2.0, aromatic_weight=0.1)
+guidance_cfg = LogitGuidanceConfig(valence_weight=2.0)
 guidance_fn = make_logit_guidance(
     guidance_cfg,
     weight_fn=lambda s: 10.0 * (1.0 - s / diff_state.model.sigma_max),

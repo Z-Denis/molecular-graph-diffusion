@@ -2,12 +2,12 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from mgd.dataset.utils import GraphBatch
+from mgd.experimental.dataset.utils import GraphBatch
 from mgd.latent import GraphLatentSpace, GraphLatent
-from mgd.model.autoencoder import GraphAutoencoder
-from mgd.model.embeddings import GraphEmbedder
-from mgd.model.decoder import EdgeCategoricalDecoder, NodeCategoricalDecoder, GraphDecoder
-from mgd.training.autoencoder import create_autoencoder_state
+from mgd.experimental.model.autoencoder import GraphAutoencoder
+from mgd.experimental.model.embeddings import GraphEmbedder
+from mgd.experimental.model.decoder import EdgeCategoricalDecoder, NodeCategoricalDecoder, GraphDecoder
+from mgd.experimental.training.autoencoder import create_autoencoder_state
 
 
 def _small_batch():

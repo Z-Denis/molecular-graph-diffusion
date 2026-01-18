@@ -1,4 +1,4 @@
-"""Energy-guidance utilities for categorical-logit diffusion sampling."""
+"""Energy-guidance utilities for categorical-logit diffusion sampling (legacy)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from mgd.latent import GraphLatent, center_logits, symmetrize_edge
-from mgd.dataset.qm9 import BOND_ORDERS, VALENCE_TABLE
+from mgd.experimental.dataset.qm9 import BOND_ORDERS, VALENCE_TABLE
 
 
 def _edge_probs(edge_logits: jnp.ndarray) -> jnp.ndarray:
@@ -40,6 +40,18 @@ def _expected_degree(edge_logits: jnp.ndarray, pair_mask: jnp.ndarray) -> jnp.nd
     return (p_exist * pair_mask).sum(axis=-1)
 
 
+def _expected_aromatic_incidence(
+    edge_logits: jnp.ndarray,
+    pair_mask: jnp.ndarray,
+    aromatic_index: int,
+) -> jnp.ndarray:
+    p = _edge_probs(edge_logits)
+    if aromatic_index < 0 or aromatic_index >= p.shape[-1]:
+        raise ValueError("aromatic_index out of range for edge logits.")
+    p_arom = p[..., aromatic_index]
+    return (p_arom * pair_mask).sum(axis=-1)
+
+
 def valence_over_penalty(
     logits: GraphLatent,
     node_mask: jnp.ndarray,
@@ -68,10 +80,24 @@ def degree_mse_penalty(
     return (jnp.square(deg_hat - target_degree) * mask).sum() / jnp.maximum(mask.sum(), 1.0)
 
 
+def aromatic_coherence_penalty(
+    logits: GraphLatent,
+    node_mask: jnp.ndarray,
+    pair_mask: jnp.ndarray,
+    *,
+    aromatic_index: int = 4,
+) -> jnp.ndarray:
+    d_hat = _expected_aromatic_incidence(logits.edge, pair_mask, aromatic_index)
+    mask = node_mask.astype(d_hat.dtype)
+    return (jnp.square(d_hat - 2.0) * mask).sum() / jnp.maximum(mask.sum(), 1.0)
+
+
 @dataclass(frozen=True)
 class LogitGuidanceConfig:
     valence_weight: float = 0.0
     degree_weight: float = 0.0
+    aromatic_weight: float = 0.0
+    aromatic_index: int = 4
     gauge_fix: bool = True
     bond_orders: jnp.ndarray = field(default_factory=lambda: BOND_ORDERS)
     max_valence: jnp.ndarray = field(default_factory=lambda: VALENCE_TABLE)
@@ -101,6 +127,13 @@ def make_logit_guidance(
             )
         if config.degree_weight:
             raise ValueError("degree_weight is not supported without explicit targets.")
+        if config.aromatic_weight:
+            total = total + config.aromatic_weight * aromatic_coherence_penalty(
+                logits,
+                node_mask,
+                pair_mask,
+                aromatic_index=config.aromatic_index,
+            )
         return total
 
     def guide(pred, node_mask, pair_mask, sigma):
@@ -121,4 +154,5 @@ __all__ = [
     "make_logit_guidance",
     "valence_over_penalty",
     "degree_mse_penalty",
+    "aromatic_coherence_penalty",
 ]
