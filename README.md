@@ -156,8 +156,8 @@ diff_state, history = train_loop(
 print("Last metrics:", history[-1] if history else logger.data[-1])
 ```
 ```python-repl
-100%|██████████| 3000/3000 [11:31<00:00,  4.34it/s, edge_loss=0.4117, loss=1.0517, node_loss=0.6401, sigma_mean=0.4541]
-Last metrics: {'edge_loss': Array(0.46702132, dtype=float32), 'loss': Array(1.1933677, dtype=float32), 'node_loss': Array(0.72634643, dtype=float32), 'sigma_mean': Array(0.6563614, dtype=float32)}
+100%|██████████| 3000/3000 [1:04:45<00:00,  1.30s/it, edge_loss=0.0041, loss=0.0154, node_loss=0.0113, sigma_mean=1.0564]
+Last metrics: {'edge_loss': Array(0.00385095, dtype=float32), 'loss': Array(0.01907935, dtype=float32), 'node_loss': Array(0.0152284, dtype=float32), 'sigma_mean': Array(1.1326635, dtype=float32)}
 ```
 
 Once the diffusion model is trained, sampling is performed as follows:
