@@ -1,6 +1,6 @@
 # Molecular Graph Diffusion (WIP)
 
-This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. The codebase is a research sandbox to investigate the prospects of continuous relaxation of discrete graphs and study how representation choice (logits vs latents) affects stability, validity, and controllability in molecular diffusion models.
+This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. The codebase is a research sandbox to investigate the prospects of continuous relaxation of discrete graphs and study how representation choice (logits vs latents) affects stability, validity, and controllability via latent-space guidance in molecular diffusion models. Essentially, this aims at a unified diffusion framework that can naturally handle both discrete molecular structure and continuous attributes within a single generative process.
 
 The current default is Continuous Diffusion for Categorical Data (CDCD): categorical node/edge types are embedded into a continuous hypersphere space, the backbone predicts logits, and the denoised latent is reconstructed as the probability-weighted embedding average. Sampling uses an EDM-style reverse process, with symmetry enforcement on edge logits and latent states. This continuous relaxation lets us apply smooth guidance terms (e.g., expected valence) directly in the denoising process.
 
@@ -8,7 +8,7 @@ Legacy interfaces for logit-level diffusion and autoencoder-based latent diffusi
 
 ## Related work
 
-This approach combines ideas from continuous-time diffusion models (EDM), discrete graph diffusion, and molecular generative modeling. CDCD can be seen as a continuous relaxation of categorical diffusion, where the network predicts logits over discrete types while diffusion proceeds in a continuous embedding space. It is also aligned with DiGress-style modeling choices (kekulized bonds, explicit size conditioning if desired), except for a notable difference: the use of explicit hydrogens.
+This approach combines ideas from continuous-time diffusion models (EDM), discrete graph diffusion, and molecular generative modeling. CDCD can be seen as a continuous relaxation of categorical diffusion, where the network predicts logits over discrete types while diffusion proceeds in a continuous embedding space. It is also aligned with DiGress-style modeling choices (kekulized bonds, explicit size conditioning if desired), except for a notable difference: the use of explicit hydrogens, enabling mixed discrete–continuous modelling and soft constraint guidance at the atomic level.
 
 ## Setup
 Create a virtualenv, install dependencies, and install the package in editable mode:
@@ -87,7 +87,7 @@ n_layers = 4
 rho = 7.0
 num_steps = 40
 
-# Sigma scales from latent stats (masked RMS from the AE)
+# Sigma scales from latent stats (masked RMS from data)
 sigma_data_node = 1.0  # Should be adapted to the data's sigma
 sigma_data_edge = 1.0  # Should be adapted to the data's sigma
 sigma_max = 8.0 * max(sigma_data_node, sigma_data_edge)
@@ -156,16 +156,19 @@ diff_state, history = train_loop(
 print("Last metrics:", history[-1] if history else logger.data[-1])
 ```
 ```python-repl
-100%|██████████| 3000/3000 [11:31<00:00,  4.34it/s, edge_loss=0.4117, loss=1.0517, node_loss=0.6401, sigma_mean=0.4541]
-Last metrics: {'edge_loss': Array(0.46702132, dtype=float32), 'loss': Array(1.1933677, dtype=float32), 'node_loss': Array(0.72634643, dtype=float32), 'sigma_mean': Array(0.6563614, dtype=float32)}
+100%|██████████| 3000/3000 [1:04:45<00:00,  1.30s/it, edge_loss=0.0041, loss=0.0154, node_loss=0.0113, sigma_mean=1.0564]
+Last metrics: {'edge_loss': Array(0.00385095, dtype=float32), 'loss': Array(0.01907935, dtype=float32), 'node_loss': Array(0.0152284, dtype=float32), 'sigma_mean': Array(1.1326635, dtype=float32)}
 ```
 
 Once the diffusion model is trained, sampling is performed as follows:
 ```python
+import jax.numpy as jnp
 from mgd.dataset.qm9 import MAX_NODES
 from mgd.training import compute_occupation_log_weights
 from mgd.sampling import LatentSampler, HeunUpdater, LogitGuidanceConfig, make_logit_guidance
 from mgd.sampling.sampler import _prepare_masks
+from mgd.diffusion import make_sigma_schedule
+from mgd.latent import symmetrize_edge
 
 # Config
 batch_size = 1024
@@ -189,6 +192,14 @@ guidance_fn = make_logit_guidance(
     weight_fn=lambda s: 10.0 * (1.0 - s / diff_state.model.sigma_max),
 )
 
+# Build sigma schedule
+sigma_sched = make_sigma_schedule(
+    diff_state.model.sigma_min,
+    diff_state.model.sigma_max,
+    rho=rho,
+    num_steps=num_steps,
+)
+
 # Sample latent embeddings
 rng, sample_rng = jax.random.split(rng)
 latents = sampler.sample(
@@ -207,10 +218,12 @@ sigma0 = jnp.full((batch_size,), diff_state.model.sigma_min, dtype=latents.node.
 pred = diff_state.denoise(latents, sigma0, node_mask=node_mask, pair_mask=pair_mask)
 logits = pred["logits"]
 edge_logits = symmetrize_edge(logits.edge)
-````
+```
 
 Upon argmax decoding atom types, bonds can be decoded through a two-pass greedy algorithm:
 ```python
+from rdkit import Chem
+from rdkit.Chem import Draw
 from mgd.eval import decode_greedy_valence_batch, build_molecule_and_check
 
 atom_pred = jnp.argmax(logits.node, axis=-1)
@@ -218,17 +231,17 @@ atom_pred = jnp.argmax(logits.node, axis=-1)
 bond_pred = decode_greedy_valence_batch(
     edge_logits,
     atom_pred,
-    batch.node_mask,
-    batch.pair_mask,
+    node_mask,
+    pair_mask,
 )
 
 mols = []
-for i in range(n_molecules):
-    valid, result = build_molecule_and_check(atom_pred[i], bond_pred[i], batch.node_mask[i])
+for i in range(batch_size):
+    valid, result = build_molecule_and_check(atom_pred[i], bond_pred[i], node_mask[i])
     if valid:
         mols.append(result)
     else:
-        print("Invalid molecule: ", str(Chem.MolToSmiles(mol)))
+        print("Invalid molecule:", result)
 print("n_valid / n_molecules = ", len(mols) / batch_size)
 ```
 ```python-repl
@@ -284,6 +297,17 @@ MMFFOptimizeMolecule return: 0
 E / heavy atom: -1.4640059463564195
 ```
 Seems reasonable! :)
+
+## Roadmap
+
+- Mixed discrete–continuous molecular generation. In particular, joint graph–geometry diffusion (structure + 3D coordinates).
+- More scalable transformer backbone.
+- Extend soft guided sampling to additional chemical and physical constraints.
+- Scaffold-conditioned generation (partial graph conditioning).
+- Two-step greedy decoding:
+    1. Kruskal-style decoding on scaffold atoms.
+    2. Valence-constrained greedy completion.
+- Merge local sharding and parallelism logic.
 
 ## Legacy interfaces (phased out)
 
