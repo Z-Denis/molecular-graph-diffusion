@@ -9,12 +9,14 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
-from ..latent import GraphLatent, GraphLatentSpace
+from ..latent import GraphLatent
 from .backbone import MPNNBackbone
 
 
 class MPNNDenoiser(nn.Module):
-    space: GraphLatentSpace
+    node_dim: int
+    edge_dim: int
+
     node_vocab: int
     edge_vocab: int
     
@@ -36,7 +38,8 @@ class MPNNDenoiser(nn.Module):
         pair_mask: jnp.ndarray,
     ) -> GraphLatent:
         backbone = MPNNBackbone(
-            space=self.space,
+            node_dim=self.node_dim,
+            edge_dim=self.edge_dim,
             mess_dim=self.mess_dim,
             time_dim=self.time_dim,
             node_count_dim=self.node_count_dim,

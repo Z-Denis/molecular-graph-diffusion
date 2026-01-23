@@ -9,13 +9,13 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
-from ..latent import GraphLatentSpace
 from .embeddings import TimeEmbedding, NodeCountEmbedding
 from .gnn_layers import MessagePassingLayer, TransformerBlock
 
 
 class MPNNBackbone(nn.Module):
-    space: GraphLatentSpace
+    node_dim: int
+    edge_dim: int
     mess_dim: int   # message hidden dim
     time_dim: int   # time hidden dim
     node_count_dim: int | None = None
@@ -34,16 +34,10 @@ class MPNNBackbone(nn.Module):
         node_mask: jnp.ndarray,
         pair_mask: jnp.ndarray,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        node_dim, edge_dim = nodes.shape[-1], edges.shape[-1]
-        if node_dim != self.space.node_dim or edge_dim != self.space.edge_dim:
-            raise ValueError(
-                f"Backbone received node/edge dims {(node_dim, edge_dim)} "
-                f"but was initialized with {(self.space.node_dim, self.space.edge_dim)}."
-            )
         time_emb = TimeEmbedding(
             self.time_dim,
-            self.space.node_dim,
-            self.space.edge_dim,
+            self.node_dim,
+            self.edge_dim,
             self.activation,
             param_dtype=self.param_dtype,
             name="time_embedding",
@@ -51,16 +45,16 @@ class MPNNBackbone(nn.Module):
         count_dim = self.time_dim if self.node_count_dim is None else self.node_count_dim
         count_emb = NodeCountEmbedding(
             embed_dim=count_dim,
-            node_dim=self.space.node_dim,
-            edge_dim=self.space.edge_dim,
+            node_dim=self.node_dim,
+            edge_dim=self.edge_dim,
             activation=self.activation,
             param_dtype=self.param_dtype,
             name="node_count_embedding",
         )
         mpnn = partial(
             MessagePassingLayer,
-            self.space.node_dim,
-            self.space.edge_dim,
+            self.node_dim,
+            self.edge_dim,
             self.mess_dim,
             activation=self.activation,
             param_dtype=self.param_dtype,
@@ -85,7 +79,6 @@ class MPNNBackbone(nn.Module):
 
 
 class TransformerBackbone(nn.Module):
-    space: GraphLatentSpace
     node_dim: int
     edge_dim: int
 
