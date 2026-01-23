@@ -88,12 +88,14 @@ class SelfAttention(nn.Module):
         edges: jnp.ndarray,
         *,
         node_mask: jnp.ndarray,
+        pair_mask: jnp.ndarray,
     ) -> jnp.ndarray:
         assert self.n_features % self.n_heads == 0
         nodes_shape = nodes.shape
         d_head = self.n_features // self.n_heads
 
         node_mask = jax.lax.stop_gradient(node_mask).astype(nodes.dtype)
+        pair_mask = jax.lax.stop_gradient(pair_mask).astype(edges.dtype)
         attn_mask = node_mask[:, :, None] * node_mask[:, None, :]
         big_neg = jnp.array(-1e9, dtype=self.param_dtype)
         log_attn_mask = (1.0 - attn_mask) * big_neg
@@ -105,7 +107,7 @@ class SelfAttention(nn.Module):
         q = q.reshape(q.shape[:-1], self.n_heads, d_head).swapaxes(-2, -3)  # (B,H,N,Dh)
         k = k.reshape(k.shape[:-1], self.n_heads, d_head).swapaxes(-2, -3)  # (B,H,N,Dh)
         v = v.reshape(v.shape[:-1], self.n_heads, d_head).swapaxes(-2, -3)  # (B,H,N,Dh)
-        edges = edges * (1 - diag)  # remove diagonal garbage
+        edges = edges * pair_mask[..., None]
         bias = nn.Dense(self.n_heads, param_dtype=self.param_dtype)(edges)  # (B,N,N,H)
         bias = bias.swapaxes(-1, -3)    # (B,H,N,N)
         log_w = jnp.einsum('...id,...jd->...ij', q, k) / jnp.sqrt(d_head)
@@ -148,7 +150,7 @@ class TransformerBlock(nn.Module):
                 param_dtype=self.param_dtype,
             )
         h = ln()(nodes)
-        h = att(h, edges, node_mask=node_mask)
+        h = att(h, edges, node_mask=node_mask, pair_mask=pair_mask)
         nodes = nodes + h
         h = ln()(nodes)
         h = MLP(
