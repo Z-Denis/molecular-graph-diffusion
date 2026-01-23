@@ -124,6 +124,7 @@ class TransformerBlock(nn.Module):
     n_heads: int = 8
     alpha_node: int = 4
     alpha_edge: int = 4
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
     symmetrize: bool = True
     use_mul: bool = True
@@ -146,14 +147,13 @@ class TransformerBlock(nn.Module):
                 n_heads=self.n_heads, 
                 param_dtype=self.param_dtype,
             )
-        conc = aggregate_node_edge
-
         h = ln()(nodes)
         h = att(h, edges, node_mask=node_mask)
         nodes = nodes + h
         h = ln()(nodes)
         h = MLP(
             (self.alpha_node * self.node_dim, self.node_dim),
+            activation=self.activation,
             param_dtype=self.param_dtype,
         )(h)
         nodes = nodes + h
@@ -167,11 +167,12 @@ class TransformerBlock(nn.Module):
         
         hp = ln()(edges)
         parts.append(hp)
-        pair_in = jnp.concatenate(parts, axis=-1)
+        pair_in = jnp.concatenate(parts, axis=-1)   # maybe use aggregate_node_edge
 
         hp = MLP(
             (self.alpha_edge * self.edge_dim, self.edge_dim),
             param_dtype=self.param_dtype,
+            activation=self.activation,
         )(pair_in)
         edges = edges + hp
         if self.symmetrize:
