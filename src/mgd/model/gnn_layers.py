@@ -175,7 +175,7 @@ class TransformerBlock(nn.Module):
         edges = edges + hp
         if self.symmetrize:
             edges = 0.5 * (edges + edges.swapaxes(-2, -3))
-        edges = edges * pair_mask
+        edges = edges * pair_mask[..., None]
 
         return nodes, edges
 
