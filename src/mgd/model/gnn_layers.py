@@ -100,13 +100,12 @@ class SelfAttention(nn.Module):
         big_neg = jnp.array(-1e9, dtype=self.param_dtype)
         log_attn_mask = (1.0 - attn_mask) * big_neg
         log_attn_mask = log_attn_mask[:, None, :, :]  # (B,1,N,N)
-        diag = jnp.eye(node_mask.shape[-1], dtype=nodes.dtype)[None, None, :, :]  # (1,1,N,N)
         
         qkv = nn.Dense(3 * self.n_features, param_dtype=self.param_dtype)(nodes)
         q, k, v = jnp.split(qkv, 3, axis=-1)
-        q = q.reshape(q.shape[:-1], self.n_heads, d_head).swapaxes(-2, -3)  # (B,H,N,Dh)
-        k = k.reshape(k.shape[:-1], self.n_heads, d_head).swapaxes(-2, -3)  # (B,H,N,Dh)
-        v = v.reshape(v.shape[:-1], self.n_heads, d_head).swapaxes(-2, -3)  # (B,H,N,Dh)
+        q = q.reshape(q.shape[:-1] + (self.n_heads, d_head)).swapaxes(-2, -3)  # (B,H,N,Dh)
+        k = k.reshape(k.shape[:-1] + (self.n_heads, d_head)).swapaxes(-2, -3)  # (B,H,N,Dh)
+        v = v.reshape(v.shape[:-1] + (self.n_heads, d_head)).swapaxes(-2, -3)  # (B,H,N,Dh)
         edges = edges * pair_mask[..., None]
         bias = nn.Dense(self.n_heads, param_dtype=self.param_dtype)(edges)  # (B,N,N,H)
         bias = bias.swapaxes(-1, -3)    # (B,H,N,N)
@@ -161,15 +160,12 @@ class TransformerBlock(nn.Module):
         nodes = nodes + h
         nodes = nodes * node_mask[..., None]
 
-        ni = nodes[:, :, None, :]
-        nj = nodes[:, None, :, :]
-        parts = [ni, nj]
-        if self.use_mul:
-            parts.append(ni * nj)
-        
         hp = ln()(edges)
-        parts.append(hp)
-        pair_in = jnp.concatenate(parts, axis=-1)   # maybe use aggregate_node_edge
+        pair_in = aggregate_node_edge(node_i=nodes, node_j=nodes, edge_ij=hp)
+        if self.use_mul:
+            ni = nodes[:, :, None, :]
+            nj = nodes[:, None, :, :]
+            pair_in = jnp.concatenate([pair_in, ni * nj], axis=-1)
 
         hp = MLP(
             (self.alpha_edge * self.edge_dim, self.edge_dim),
@@ -184,4 +180,4 @@ class TransformerBlock(nn.Module):
         return nodes, edges
 
 
-__all__ = ["MessagePassingLayer"]
+__all__ = ["MessagePassingLayer", "TransformerBlock"]
