@@ -96,7 +96,6 @@ sigma_min = 0.005 * max(sigma_data_node, sigma_data_edge)
 # Build model
 # Backbone
 denoiser = MPNNDenoiser(
-    space=space,
     node_vocab=ATOM_VOCAB_SIZE,
     edge_vocab=BOND_VOCAB_SIZE,
     mess_dim=mess_dim,

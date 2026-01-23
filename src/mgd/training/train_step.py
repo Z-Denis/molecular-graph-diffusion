@@ -76,7 +76,7 @@ def create_train_state(
     pair_mask = batch.pair_mask
     rng_params, rng_noise = jax.random.split(rng)
 
-    dummy_latent = model.denoiser.space.zeros_from_masks(node_mask, pair_mask)
+    dummy_latent = model.embedder.space.zeros_from_masks(node_mask, pair_mask)
     sigma0 = jnp.ones((dummy_latent.node.shape[0],), dtype=dummy_latent.node.dtype)
     variables = model.init(
         {"params": rng_params, "noise": rng_noise},
