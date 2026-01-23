@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Protocol
 
 import jax
 import jax.numpy as jnp
@@ -11,12 +11,22 @@ from flax import linen as nn
 
 from ..dataset.utils import GraphBatch
 from ..latent import GraphLatent, latent_from_scalar, symmetrize_edge
-from .denoiser import MPNNDenoiser
 from .embeddings import CategoricalLatentEmbedder
 
 
+class DenoiserLike(Protocol):
+    def __call__(
+        self,
+        xt: GraphLatent,
+        log_sigma: jnp.ndarray,
+        *,
+        node_mask: jnp.ndarray,
+        pair_mask: jnp.ndarray,
+    ) -> GraphLatent: ...
+
+
 class GraphDiffusionModel(nn.Module):
-    denoiser: MPNNDenoiser              # predicts categorical logits
+    denoiser: DenoiserLike              # predicts categorical logits
     embedder: CategoricalLatentEmbedder
     sigma_data_node: float              # RMS of node latents (masked)
     sigma_data_edge: float              # RMS of edge latents (masked)

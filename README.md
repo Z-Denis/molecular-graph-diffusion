@@ -58,7 +58,7 @@ diff_space = CategoricalDiffusionSpace()
 ```
 
 ```python
-from mgd.model import MPNNDenoiser
+from mgd.model import MPNNDenoiser, TransformerDenoiser
 from mgd.model import GraphDiffusionModel
 from mgd.training import create_train_state
 from mgd.training import train_loop
@@ -94,9 +94,8 @@ sigma_max = 8.0 * max(sigma_data_node, sigma_data_edge)
 sigma_min = 0.005 * max(sigma_data_node, sigma_data_edge)
 
 # Build model
-# Backbone
+# Backbone (MPNN or Transformer)
 denoiser = MPNNDenoiser(
-    space=space,
     node_vocab=ATOM_VOCAB_SIZE,
     edge_vocab=BOND_VOCAB_SIZE,
     mess_dim=mess_dim,
@@ -104,6 +103,17 @@ denoiser = MPNNDenoiser(
     node_count_dim=node_count_dim,
     n_layers=n_layers,
 )
+# Alternatively, use a Transformer backbone:
+# denoiser = TransformerDenoiser(
+#     node_dim=space.node_dim,
+#     edge_dim=space.edge_dim,
+#     node_vocab=ATOM_VOCAB_SIZE,
+#     edge_vocab=BOND_VOCAB_SIZE,
+#     time_dim=time_dim,
+#     node_count_dim=node_count_dim,
+#     n_layers=n_layers,
+#     n_heads=8,
+# )
 # Diffusion model
 diff_model = GraphDiffusionModel(
     denoiser=denoiser,
@@ -301,8 +311,9 @@ Seems reasonable! :)
 ## Roadmap
 
 - Mixed discrete–continuous molecular generation. In particular, joint graph–geometry diffusion (structure + 3D coordinates).
-- More scalable transformer backbone.
+- Transformer backbone experiments with scaling and conditioning; MPNN remains supported.
 - Extend soft guided sampling to additional chemical and physical constraints.
+- Factorised bond decoding: separate bond existence from bond type.
 - Scaffold-conditioned generation (partial graph conditioning).
 - Two-step greedy decoding:
     1. Kruskal-style decoding on scaffold atoms.
