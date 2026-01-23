@@ -98,7 +98,7 @@ class SelfAttention(nn.Module):
         big_neg = jnp.array(-1e9, dtype=self.param_dtype)
         log_attn_mask = (1.0 - attn_mask) * big_neg
         log_attn_mask = log_attn_mask[:, None, :, :]  # (B,1,N,N)
-        diag = jnp.eye(nodes_shape[-1], dtype=nodes.dtype)[None, None, :, :]  # (1,1,N,N)
+        diag = jnp.eye(node_mask.shape[-1], dtype=nodes.dtype)[None, None, :, :]  # (1,1,N,N)
         
         qkv = nn.Dense(3 * self.n_features, param_dtype=self.param_dtype)(nodes)
         q, k, v = jnp.split(qkv, 3, axis=-1)
