@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Protocol
 
 import jax
 import jax.numpy as jnp
@@ -16,6 +16,19 @@ from mgd.latent import (
     symmetrize_edge_probs,
 )
 from mgd.dataset.qm9 import BOND_ORDERS, VALENCE_TABLE
+
+
+class GuidanceFn(Protocol):
+    def __call__(
+        self,
+        pred: dict,
+        xt: GraphLatent,
+        sigma: jnp.ndarray,
+        node_mask: jnp.ndarray,
+        pair_mask: jnp.ndarray,
+        predict_fn: Callable[[GraphLatent, jnp.ndarray, jnp.ndarray, jnp.ndarray], dict],
+        logits_to_latent: Callable[[GraphLatent], GraphLatent],
+    ) -> GraphLatent: ...
 
 
 def _expected_bond_order_sum(
@@ -79,7 +92,7 @@ def make_logit_guidance(
     config: LogitGuidanceConfig,
     *,
     weight_fn: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
-) -> Callable[[dict, jnp.ndarray, jnp.ndarray, jnp.ndarray], GraphLatent]:
+) -> GuidanceFn:
     """Return a guidance function to apply to x_hat during sampling."""
 
     def energy(probs, node_mask, pair_mask):

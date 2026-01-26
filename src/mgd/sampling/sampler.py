@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from mgd.latent import GraphLatent, AbstractLatentSpace, symmetrize_latent
 from mgd.sampling.updater import HeunUpdater
+from mgd.sampling.guidance import GuidanceFn
 from mgd.training.train_step import DiffusionTrainState
 
 
@@ -67,9 +68,7 @@ class LatentSampler:
         pair_mask: Optional[jnp.ndarray] = None,
         snapshot_steps: Optional[jnp.ndarray] = None,
         max_atoms: int = None,
-        guidance_fn: Optional[
-            Callable[[dict, GraphLatent, jnp.ndarray, jnp.ndarray, jnp.ndarray, Callable, Callable], GraphLatent]
-        ] = None,
+        guidance_fn: Optional[GuidanceFn] = None,
     ):
         """Iteratively sample x_0 from noise using the provided updater.
 
