@@ -68,7 +68,7 @@ class LatentSampler:
         snapshot_steps: Optional[jnp.ndarray] = None,
         max_atoms: int = None,
         guidance_fn: Optional[
-            Callable[[dict, jnp.ndarray, jnp.ndarray, jnp.ndarray], GraphLatent]
+            Callable[[dict, GraphLatent, jnp.ndarray, jnp.ndarray, jnp.ndarray, Callable, Callable], GraphLatent]
         ] = None,
     ):
         """Iteratively sample x_0 from noise using the provided updater.
@@ -114,11 +114,16 @@ class LatentSampler:
             sigma_next = sigma_schedule[jnp.minimum(idx + 1, sigma_schedule.shape[0] - 1)]
             pred = self.predict_fn(xt_c, sigma, node_mask, pair_mask)
             x_hat = pred["x_hat"]
-            x_hat = symmetrize_latent(x_hat, node_mask, pair_mask)
             if guidance_fn is not None:
-                guided_logits = guidance_fn(pred, node_mask, pair_mask, sigma)
-                x_hat = self.logits_to_latent(guided_logits).masked(node_mask, pair_mask)
-                x_hat = symmetrize_latent(x_hat, node_mask, pair_mask)
+                x_hat = guidance_fn(
+                    pred,
+                    xt_c,
+                    sigma,
+                    node_mask,
+                    pair_mask,
+                    self.predict_fn,
+                    self.logits_to_latent,
+                )
             ds = sigma_next - sigma
             slope = GraphLatent(
                 (xt_c.node - x_hat.node) / sigma[..., None, None],

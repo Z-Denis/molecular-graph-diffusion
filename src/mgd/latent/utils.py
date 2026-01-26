@@ -62,6 +62,17 @@ def symmetrize_edge(edge: jnp.ndarray) -> jnp.ndarray:
     return 0.5 * (edge + edge.swapaxes(-2, -3))
 
 
+def symmetrize_edge_probs(edge_probs: jnp.ndarray, eps: float = 1e-8) -> jnp.ndarray:
+    """Symmetrize edge probabilities, re-normalize, and force diagonal to class 0."""
+    edge = symmetrize_edge(edge_probs)
+    edge = edge / jnp.maximum(edge.sum(axis=-1, keepdims=True), eps)
+    n = edge.shape[-2]
+    diag = jnp.eye(n, dtype=edge.dtype)
+    edge = edge * (1.0 - diag[..., None])
+    edge = edge.at[..., jnp.arange(n), jnp.arange(n), 0].set(1.0)
+    return edge
+
+
 def symmetrize_latent(
     latent: GraphLatent,
     node_mask: jnp.ndarray | None = None,

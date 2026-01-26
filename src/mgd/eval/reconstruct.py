@@ -11,7 +11,7 @@ from rdkit import Chem
 from rdkit.Chem import rdchem, rdmolops
 
 from mgd.dataset.qm9 import ATOM_TYPES, BOND_ORDERS, VALENCE_TABLE
-from mgd.latent import edge_probs_from_logits
+from mgd.latent import edge_probs_from_logits, symmetrize_edge_probs
 
 
 def _default_allowed_sets_by_symbol() -> Dict[str, Tuple[int, ...]]:
@@ -65,7 +65,7 @@ def decode_greedy_valence_single(
     p = edge_probs_from_logits(edge_logits)
 
     # symmetrize in probability space
-    p = 0.5 * (p + jnp.swapaxes(p, -2, -3))
+    p = symmetrize_edge_probs(p)
 
     # renormalize per pair
     z = p.sum(axis=-1, keepdims=True)

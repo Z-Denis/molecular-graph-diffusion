@@ -13,6 +13,7 @@ from .utils import (
     latent_from_probs,
     normalize_embeddings,
     symmetrize_edge,
+    symmetrize_edge_probs,
     symmetrize_latent,
     weighted_embeddings,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "latent_from_probs",
     "normalize_embeddings",
     "symmetrize_edge",
+    "symmetrize_edge_probs",
     "symmetrize_latent",
     "weighted_embeddings",
 ]
