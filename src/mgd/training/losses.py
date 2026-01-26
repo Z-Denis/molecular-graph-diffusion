@@ -20,6 +20,17 @@ def _apply_weights(
     return w * loss
 
 
+def _apply_binary_weights(
+    loss: jnp.ndarray, labels: jnp.ndarray, weights: jnp.ndarray | None
+) -> jnp.ndarray:
+    if weights is None:
+        return loss
+    if weights.ndim == 0:
+        return weights * loss
+    w = jnp.take(weights, labels.astype(jnp.int32))
+    return w * loss
+
+
 def _apply_mask_mean(loss: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
     masked = loss * mask
     return masked.sum() / jnp.maximum(mask.sum(), 1.0)
@@ -72,16 +83,29 @@ def masked_cross_entropy_per_graph(
     return loss, {"loss": loss}
 
 
+def masked_binary_ce_per_graph(
+    logits: jnp.ndarray,
+    targets: jnp.ndarray,
+    mask: jnp.ndarray,
+    weights: jnp.ndarray | None = None,
+) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    bce = optax.sigmoid_binary_cross_entropy(logits, targets)
+    bce = _apply_binary_weights(bce, targets, weights)
+    loss = _apply_mask_mean_per_graph(bce, mask)
+    return loss, {"loss": loss}
+
+
 def categorical_ce_loss(
     logits: GraphLatent,
     batch,
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
     node_class_weights: jnp.ndarray | None = None,
-    edge_class_weights: jnp.ndarray | None = None,
+    edge_exist_weights: jnp.ndarray | None = None,
+    edge_type_weights: jnp.ndarray | None = None,
     label_smoothing: float | None = None,
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
-    """Cross-entropy on categorical node/edge logits with per-graph normalization."""
+    """Cross-entropy on categorical node logits and factorized edge logits."""
     node_loss, _ = masked_cross_entropy_per_graph(
         logits.node,
         batch.atom_type,
@@ -89,19 +113,35 @@ def categorical_ce_loss(
         class_weights=node_class_weights,
         use_label_smoothing=label_smoothing,
     )
-    edge_loss, _ = masked_cross_entropy_per_graph(
-        logits.edge,
-        batch.bond_type,
+    edge_exist = (batch.bond_type > 0).astype(logits.edge.dtype)
+    exist_loss, _ = masked_binary_ce_per_graph(
+        logits.edge[..., 0],
+        edge_exist,
         pair_mask,
-        class_weights=edge_class_weights,
+        weights=edge_exist_weights,
+    )
+    type_targets = jnp.maximum(batch.bond_type - 1, 0)
+    type_mask = pair_mask * (batch.bond_type > 0)
+    type_loss, _ = masked_cross_entropy_per_graph(
+        logits.edge[..., 1:],
+        type_targets,
+        type_mask,
+        class_weights=edge_type_weights,
         use_label_smoothing=label_smoothing,
     )
+    edge_loss = exist_loss + type_loss
     total = node_loss + edge_loss
-    return total, {"node_loss": node_loss, "edge_loss": edge_loss}
+    return total, {
+        "node_loss": node_loss,
+        "edge_loss": edge_loss,
+        "edge_exist_loss": exist_loss,
+        "edge_type_loss": type_loss,
+    }
 
 
 __all__ = [
     "masked_cross_entropy",
     "masked_cross_entropy_per_graph",
+    "masked_binary_ce_per_graph",
     "categorical_ce_loss",
 ]

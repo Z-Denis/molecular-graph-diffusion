@@ -11,6 +11,7 @@ from rdkit import Chem
 from rdkit.Chem import rdchem, rdmolops
 
 from mgd.dataset.qm9 import ATOM_TYPES, BOND_ORDERS, VALENCE_TABLE
+from mgd.latent import edge_probs_from_logits
 
 
 def _default_allowed_sets_by_symbol() -> Dict[str, Tuple[int, ...]]:
@@ -60,8 +61,8 @@ def decode_greedy_valence_single(
     if c != 4:
         raise ValueError("Expected 4 bond classes (0..3).")
 
-    # softmax over classes
-    p = jax.nn.softmax(edge_logits, axis=-1)
+    # existence logit + conditional type softmax
+    p = edge_probs_from_logits(edge_logits)
 
     # symmetrize in probability space
     p = 0.5 * (p + jnp.swapaxes(p, -2, -3))
@@ -77,8 +78,7 @@ def decode_greedy_valence_single(
     p = p.at[jnp.arange(n), jnp.arange(n), 0].set(1.0)
 
     # existence / type probs
-    p_none = p[..., 0]
-    p_exist = 1.0 - p_none
+    p_exist = 1.0 - p[..., 0]
     p_pos = p[..., 1:]
     p_pos_sum = p_pos.sum(axis=-1, keepdims=True)
     p_type = p_pos / (p_pos_sum + eps)

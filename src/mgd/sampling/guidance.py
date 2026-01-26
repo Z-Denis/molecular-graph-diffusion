@@ -8,12 +8,18 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from mgd.latent import GraphLatent, center_logits, symmetrize_edge
+from mgd.latent import (
+    GraphLatent,
+    center_edge_type_logits,
+    center_logits,
+    edge_probs_from_logits,
+    symmetrize_edge,
+)
 from mgd.dataset.qm9 import BOND_ORDERS, VALENCE_TABLE
 
 
 def _edge_probs(edge_logits: jnp.ndarray) -> jnp.ndarray:
-    return jax.nn.softmax(edge_logits, axis=-1)
+    return edge_probs_from_logits(edge_logits)
 
 
 def _atom_probs(atom_logits: jnp.ndarray) -> jnp.ndarray:
@@ -35,8 +41,7 @@ def _expected_bond_order_sum(
 
 
 def _expected_degree(edge_logits: jnp.ndarray, pair_mask: jnp.ndarray) -> jnp.ndarray:
-    p = _edge_probs(edge_logits)
-    p_exist = 1.0 - p[..., 0]
+    p_exist = jax.nn.sigmoid(edge_logits[..., 0])
     return (p_exist * pair_mask).sum(axis=-1)
 
 
@@ -88,7 +93,7 @@ def make_logit_guidance(
         if config.gauge_fix:
             logits = GraphLatent(
                 center_logits(logits.node, node_mask),
-                center_logits(logits.edge, pair_mask),
+                center_edge_type_logits(logits.edge, pair_mask),
             )
         total = jnp.array(0.0, dtype=logits.node.dtype)
         if config.valence_weight:

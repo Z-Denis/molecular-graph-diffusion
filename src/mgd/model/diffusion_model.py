@@ -10,7 +10,7 @@ from jax.typing import DTypeLike
 from flax import linen as nn
 
 from ..dataset.utils import GraphBatch
-from ..latent import GraphLatent, latent_from_scalar, symmetrize_edge
+from ..latent import GraphLatent, edge_probs_from_logits, latent_from_scalar, symmetrize_edge
 from .embeddings import CategoricalLatentEmbedder
 
 
@@ -77,7 +77,7 @@ class GraphDiffusionModel(nn.Module):
         logits: GraphLatent,
     ) -> GraphLatent:
         node = jax.nn.softmax(logits.node, axis=-1)
-        edge = jax.nn.softmax(logits.edge, axis=-1)
+        edge = edge_probs_from_logits(logits.edge)
         return GraphLatent(node=node, edge=edge)
 
     def _xhat_from_probs(self, probs: GraphLatent) -> GraphLatent:

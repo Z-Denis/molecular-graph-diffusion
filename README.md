@@ -230,7 +230,7 @@ logits = pred["logits"]
 edge_logits = symmetrize_edge(logits.edge)
 ```
 
-Upon argmax decoding atom types, bonds can be decoded through a two-pass greedy algorithm:
+Edge logits are factorised as an existence logit (index `0`) plus conditional type logits (indices `1:`). Upon argmax decoding atom types, bonds can be decoded through a two-pass greedy algorithm:
 ```python
 from rdkit import Chem
 from rdkit.Chem import Draw
