@@ -124,6 +124,7 @@ class GraphDiffusionModel(nn.Module):
         noise: GraphLatent | None = None,
     ) -> Dict[str, object]:
         """Forward pass: add noise at level sigma and predict denoised x_hat."""
+        x0 = symmetrize_latent(x0, node_mask, pair_mask)
         if noise is None:
             rng = self.make_rng("noise")
             noise = self.embedder.space.noise_from_masks(rng, node_mask, pair_mask)
