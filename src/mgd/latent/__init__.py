@@ -8,9 +8,12 @@ from .space import (
 )
 from .utils import (
     center_logits,
+    center_edge_type_logits,
+    edge_probs_from_logits,
     latent_from_probs,
     normalize_embeddings,
     symmetrize_edge,
+    symmetrize_edge_probs,
     symmetrize_latent,
     weighted_embeddings,
 )
@@ -21,9 +24,12 @@ __all__ = [
     "GraphLatent",
     "latent_from_scalar",
     "center_logits",
+    "center_edge_type_logits",
+    "edge_probs_from_logits",
     "latent_from_probs",
     "normalize_embeddings",
     "symmetrize_edge",
+    "symmetrize_edge_probs",
     "symmetrize_latent",
     "weighted_embeddings",
 ]

@@ -24,7 +24,8 @@ class CategoricalDiffusionSpace:
 
     loss_fn: Callable[..., Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]] = categorical_ce_loss
     node_class_weights: jnp.ndarray | None = None
-    edge_class_weights: jnp.ndarray | None = None
+    edge_exist_weights: jnp.ndarray | None = None
+    edge_type_weights: jnp.ndarray | None = None
     label_smoothing: float | None = None
 
     def loss(self, outputs: Dict[str, object], batch: GraphBatch) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
@@ -34,7 +35,8 @@ class CategoricalDiffusionSpace:
             batch.node_mask,
             batch.pair_mask,
             node_class_weights=self.node_class_weights,
-            edge_class_weights=self.edge_class_weights,
+            edge_exist_weights=self.edge_exist_weights,
+            edge_type_weights=self.edge_type_weights,
             label_smoothing=self.label_smoothing,
         )
 
