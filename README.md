@@ -2,7 +2,7 @@
 
 This JAX/Flax (linen) project implements a diffusion-based generative framework for molecular graphs, with a focus on the QM9 dataset. The codebase is a research sandbox to investigate the prospects of continuous relaxation of discrete graphs and study how representation choice (logits vs latents) affects stability, validity, and controllability via latent-space guidance in molecular diffusion models. Essentially, this aims at a unified diffusion framework that can naturally handle both discrete molecular structure and continuous attributes within a single generative process.
 
-The current default is Continuous Diffusion for Categorical Data (CDCD): categorical node/edge types are embedded into a continuous hypersphere space, the backbone predicts logits, and the denoised latent is reconstructed as the probability-weighted embedding average. Sampling uses an EDM-style reverse process, with symmetry enforcement on edge logits and latent states. This continuous relaxation lets us apply smooth guidance terms (e.g., expected valence) directly in the denoising process.
+The current default is Continuous Diffusion for Categorical Data (CDCD): categorical node/edge types are embedded into a continuous hypersphere space, the backbone predicts logits, and the denoised latent is reconstructed as the probability-weighted embedding average. Sampling uses an EDM-style reverse process, with symmetry enforced on the latent state (x0, xσ, xt) and symmetric noise. Logits are not symmetrised. This continuous relaxation lets us apply smooth guidance terms (e.g., expected valence) directly in the denoising process.
 
 Legacy interfaces for logit-level diffusion and autoencoder-based latent diffusion are still present but considered phased out (see the Legacy section below). Contrary to the legacy logic, aromaticity bond hints are no longer outputted, relying uniquely on kekulisation.
 
@@ -23,7 +23,7 @@ pip install -e .
 First download QM9, process molecules into dense adjacency format, and create training-test splits:
 ```bash
 python data/download_qm9.py --output data/raw
-python3 scripts/preprocess_qm9.py --input data/raw/gdb9.sdf --output data/processed/qm9_dense.npz --dtype float32
+python3 scripts/preprocess_qm9.py --input data/raw/gdb9.sdf --output data/processed/qm9_dense.npz --dtype float32 --kekulize
 python3 scripts/create_splits.py --num_samples 131970 --train_ratio 0.8 --val_ratio 0.1 --test_ratio 0.1 --output data/processed/qm9_splits.npz --seed 42
 ```
 
@@ -178,7 +178,6 @@ from mgd.training import compute_occupation_log_weights
 from mgd.sampling import LatentSampler, HeunUpdater, LogitGuidanceConfig, make_logit_guidance
 from mgd.sampling.sampler import _prepare_masks
 from mgd.diffusion import make_sigma_schedule
-from mgd.latent import symmetrize_edge
 
 # Config
 batch_size = 1024
@@ -195,7 +194,9 @@ _, _, node_mask, pair_mask = _prepare_masks(n_atoms, batch_size, space.dtype, No
 # Prepare sampler
 sampler = LatentSampler(space=space, state=diff_state, updater=HeunUpdater())
 
-# Soft guidance (optional)
+# Soft guidance (optional). Default guidance differentiates through the denoiser
+# to obtain ∇x E(pθ(x,σ)); an experimental cheap mode can guide via symmetrised
+# probabilities without backprop through the model.
 guidance_cfg = LogitGuidanceConfig(valence_weight=1.0)
 guidance_fn = make_logit_guidance(
     guidance_cfg,
@@ -227,10 +228,10 @@ latents = sampler.sample(
 sigma0 = jnp.full((batch_size,), diff_state.model.sigma_min, dtype=latents.node.dtype)
 pred = diff_state.denoise(latents, sigma0, node_mask=node_mask, pair_mask=pair_mask)
 logits = pred["logits"]
-edge_logits = symmetrize_edge(logits.edge)
+edge_logits = logits.edge
 ```
 
-Edge logits are factorised as an existence logit (index `0`) plus conditional type logits (indices `1:`). Upon argmax decoding atom types, bonds can be decoded through a two-pass greedy algorithm:
+Edge logits are factorised as an existence logit (index `0`) plus conditional type logits (indices `1:`). Type CE is applied only when a bond exists. Upon argmax decoding atom types, bonds can be decoded through a two-pass greedy algorithm:
 ```python
 from rdkit import Chem
 from rdkit.Chem import Draw
