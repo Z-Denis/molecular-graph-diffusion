@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from mgd.experimental.dataset.utils import GraphBatch
-from mgd.latent import GraphLatent, GraphLatentSpace, center_logits
+from mgd.latent import GraphLatent, GraphLatentSpace, center_edge_type_logits, center_logits
 from mgd.experimental.training.losses import categorical_ce_loss, edm_masked_mse
 
 
@@ -70,11 +70,11 @@ class OneHotLogitDiffusionSpace:
         if self.gauge_fix:
             x_hat = GraphLatent(
                 center_logits(x_hat.node, batch.node_mask),
-                center_logits(x_hat.edge, batch.pair_mask),
+                center_edge_type_logits(x_hat.edge, batch.pair_mask),
             )
             clean = GraphLatent(
                 center_logits(clean.node, batch.node_mask),
-                center_logits(clean.edge, batch.pair_mask),
+                center_edge_type_logits(clean.edge, batch.pair_mask),
             )
         return self.loss_fn(x_hat, clean, batch.node_mask, batch.pair_mask, sigma=outputs["sigma"])
 

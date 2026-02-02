@@ -150,6 +150,9 @@ class GraphLatentSpace(AbstractLatentSpace):
         edge_shape = pair_mask.shape + (self.edge_dim,)
         nodes = jax.random.normal(rng_n, node_shape, dtype=self.dtype)
         edges = jax.random.normal(rng_e, edge_shape, dtype=self.dtype)
+        edges = (edges + edges.swapaxes(-2, -3)) / jnp.sqrt(2.0)
+        n = edges.shape[-2]
+        edges = edges * (1.0 - jnp.eye(n, dtype=edges.dtype)[..., None])
         return GraphLatent(nodes, edges).masked(node_mask, pair_mask)
 
     def random_latent(

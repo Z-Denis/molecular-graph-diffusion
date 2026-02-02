@@ -8,7 +8,7 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from mgd.latent import GraphLatent, center_logits, symmetrize_edge
+from mgd.latent import GraphLatent, center_edge_type_logits, center_logits, symmetrize_edge
 from mgd.experimental.dataset.qm9 import BOND_ORDERS, VALENCE_TABLE
 
 
@@ -114,7 +114,7 @@ def make_logit_guidance(
         if config.gauge_fix:
             logits = GraphLatent(
                 center_logits(logits.node, node_mask),
-                center_logits(logits.edge, pair_mask),
+                center_edge_type_logits(logits.edge, pair_mask),
             )
         total = jnp.array(0.0, dtype=logits.node.dtype)
         if config.valence_weight:
