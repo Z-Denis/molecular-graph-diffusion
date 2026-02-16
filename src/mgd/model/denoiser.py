@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
+from ..dataset.chemistry import ChemistrySpec, DEFAULT_CHEMISTRY
 from ..latent import GraphLatent
 from .backbone import MPNNBackbone, TransformerBackbone
 
@@ -16,13 +17,12 @@ from .backbone import MPNNBackbone, TransformerBackbone
 class MPNNDenoiser(nn.Module):
     node_dim: int
     edge_dim: int
-
-    node_vocab: int
-    edge_vocab: int
     
     mess_dim: int   # message hidden dim
     time_dim: int   # time hidden dim
     node_count_dim: int | None = None
+
+    spec: ChemistrySpec = DEFAULT_CHEMISTRY
 
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     n_layers: int = 1
@@ -60,12 +60,12 @@ class MPNNDenoiser(nn.Module):
 
         # Latent to noise space
         eps_nodes = nn.Dense(
-            self.node_vocab, param_dtype=self.param_dtype,
+            self.spec.atom_vocab_size, param_dtype=self.param_dtype,
             kernel_init=nn.initializers.normal(1e-6),
             name="node_head",
         )(nodes)
         eps_edges = nn.Dense(
-            self.edge_vocab, param_dtype=self.param_dtype,
+            self.spec.bond_vocab_size, param_dtype=self.param_dtype,
             kernel_init=nn.initializers.normal(1e-6),
             name="edge_head",
         )(edges)
@@ -83,11 +83,10 @@ class TransformerDenoiser(nn.Module):
     node_dim: int
     edge_dim: int
 
-    node_vocab: int
-    edge_vocab: int
-
     time_dim: int   # time hidden dim
     node_count_dim: int | None = None
+
+    spec: ChemistrySpec = DEFAULT_CHEMISTRY
 
     n_layers: int = 1
     n_heads: int = 8
@@ -134,12 +133,12 @@ class TransformerDenoiser(nn.Module):
 
         # Latent to noise space
         eps_nodes = nn.Dense(
-            self.node_vocab, param_dtype=self.param_dtype,
+            self.spec.atom_vocab_size, param_dtype=self.param_dtype,
             kernel_init=nn.initializers.normal(1e-6),
             name="node_head",
         )(nodes)
         eps_edges = nn.Dense(
-            self.edge_vocab, param_dtype=self.param_dtype,
+            self.spec.bond_vocab_size, param_dtype=self.param_dtype,
             kernel_init=nn.initializers.normal(1e-6),
             name="edge_head",
         )(edges)

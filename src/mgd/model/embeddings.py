@@ -8,17 +8,17 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
+from ..dataset.chemistry import ChemistrySpec
+from ..dataset.chemistry import DEFAULT_CHEMISTRY
 from ..latent import GraphLatent, GraphLatentSpace
 from ..latent.utils import latent_from_probs, normalize_embeddings
-from ..dataset.qm9 import MAX_NODES
 
 
 class CategoricalLatentEmbedder(nn.Module):
     """Trainable categorical embedder with hypersphere-normalized embeddings."""
 
     space: GraphLatentSpace
-    node_vocab: int
-    edge_vocab: int
+    spec: ChemistrySpec = DEFAULT_CHEMISTRY
     eps: float = 1e-8
     param_dtype: DTypeLike = "float32"
 
@@ -26,12 +26,12 @@ class CategoricalLatentEmbedder(nn.Module):
         self._v_node = self.param(
             "node_embeddings",
             nn.initializers.normal(1.0),
-            (self.node_vocab, self.space.node_dim),
+            (self.spec.atom_vocab_size, self.space.node_dim),
         )
         self._v_edge = self.param(
             "edge_embeddings",
             nn.initializers.normal(1.0),
-            (self.edge_vocab, self.space.edge_dim),
+            (self.spec.bond_vocab_size, self.space.edge_dim),
         )
 
     def embeddings(self) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -99,7 +99,7 @@ class NodeCountEmbedding(nn.Module):
     embed_dim: int
     node_dim: int
     edge_dim: int
-    max_nodes: int = MAX_NODES
+    max_nodes: int = DEFAULT_CHEMISTRY.max_nodes
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
 
