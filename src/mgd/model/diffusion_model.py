@@ -10,7 +10,7 @@ from jax.typing import DTypeLike
 from flax import linen as nn
 
 from ..dataset.utils import GraphBatch
-from ..latent import GraphLatent, latent_from_scalar, symmetrize_edge
+from ..latent import GraphLatent, edge_probs_from_logits, latent_from_scalar, symmetrize_latent
 from .embeddings import CategoricalLatentEmbedder
 
 
@@ -77,7 +77,7 @@ class GraphDiffusionModel(nn.Module):
         logits: GraphLatent,
     ) -> GraphLatent:
         node = jax.nn.softmax(logits.node, axis=-1)
-        edge = jax.nn.softmax(logits.edge, axis=-1)
+        edge = edge_probs_from_logits(logits.edge)
         return GraphLatent(node=node, edge=edge)
 
     def _xhat_from_probs(self, probs: GraphLatent) -> GraphLatent:
@@ -110,7 +110,6 @@ class GraphDiffusionModel(nn.Module):
             node_mask=node_mask,
             pair_mask=pair_mask,
         )
-        logits = GraphLatent(logits.node, symmetrize_edge(logits.edge))
         probs = self._probs_from_logits(logits)
         x_hat = self._xhat_from_probs(probs).masked(node_mask, pair_mask)
         return {"x_hat": x_hat, "logits": logits, "probs": probs}
@@ -125,14 +124,12 @@ class GraphDiffusionModel(nn.Module):
         noise: GraphLatent | None = None,
     ) -> Dict[str, object]:
         """Forward pass: add noise at level sigma and predict denoised x_hat."""
+        x0 = symmetrize_latent(x0, node_mask, pair_mask)
         if noise is None:
             rng = self.make_rng("noise")
-            rng_n, rng_e = jax.random.split(rng)
-            noise = GraphLatent(
-                jax.random.normal(rng_n, x0.node.shape, dtype=x0.node.dtype),
-                jax.random.normal(rng_e, x0.edge.shape, dtype=x0.edge.dtype),
-            )
+            noise = self.embedder.space.noise_from_masks(rng, node_mask, pair_mask)
         x_noisy = (x0 + latent_from_scalar(sigma) * noise).masked(node_mask, pair_mask)
+        x_noisy = symmetrize_latent(x_noisy, node_mask, pair_mask)
         denoise_out = self.denoise(
             x_noisy,
             sigma,
