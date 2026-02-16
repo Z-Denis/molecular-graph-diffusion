@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 import jax
 import jax.numpy as jnp
 
+from mgd.dataset.chemistry import ChemistrySpec, DEFAULT_CHEMISTRY
 from mgd.latent import GraphLatent, center_logits, symmetrize_edge
-from mgd.dataset.qm9 import BOND_ORDERS, VALENCE_TABLE
 
 
 def _edge_probs(edge_logits: jnp.ndarray) -> jnp.ndarray:
@@ -45,8 +45,8 @@ def valence_over_penalty(
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
     *,
-    max_valence: jnp.ndarray = VALENCE_TABLE,
-    bond_orders: jnp.ndarray = BOND_ORDERS,
+    max_valence: jnp.ndarray = jnp.asarray(DEFAULT_CHEMISTRY.valence_table),
+    bond_orders: jnp.ndarray = jnp.asarray(DEFAULT_CHEMISTRY.bond_orders),
 ) -> jnp.ndarray:
     v_hat = _expected_bond_order_sum(logits.edge, pair_mask, bond_orders)
     p_atom = _atom_probs(logits.node)
@@ -70,11 +70,12 @@ def degree_mse_penalty(
 
 @dataclass(frozen=True)
 class LogitGuidanceConfig:
+    spec: ChemistrySpec = DEFAULT_CHEMISTRY
     valence_weight: float = 0.0
     degree_weight: float = 0.0
     gauge_fix: bool = True
-    bond_orders: jnp.ndarray = field(default_factory=lambda: BOND_ORDERS)
-    max_valence: jnp.ndarray = field(default_factory=lambda: VALENCE_TABLE)
+    bond_orders: jnp.ndarray | None = None
+    max_valence: jnp.ndarray | None = None
 
 
 def make_logit_guidance(
@@ -83,6 +84,16 @@ def make_logit_guidance(
     weight_fn: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
 ) -> Callable[[dict, jnp.ndarray, jnp.ndarray, jnp.ndarray], GraphLatent]:
     """Return a guidance function to apply to x_hat during sampling."""
+    bond_orders = (
+        jnp.asarray(config.spec.bond_orders)
+        if config.bond_orders is None
+        else jnp.asarray(config.bond_orders)
+    )
+    max_valence = (
+        jnp.asarray(config.spec.valence_table)
+        if config.max_valence is None
+        else jnp.asarray(config.max_valence)
+    )
 
     def energy(logits, node_mask, pair_mask):
         if config.gauge_fix:
@@ -96,8 +107,8 @@ def make_logit_guidance(
                 logits,
                 node_mask,
                 pair_mask,
-                max_valence=config.max_valence,
-                bond_orders=config.bond_orders,
+                max_valence=max_valence,
+                bond_orders=bond_orders,
             )
         if config.degree_weight:
             raise ValueError("degree_weight is not supported without explicit targets.")
