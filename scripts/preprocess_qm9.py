@@ -1,6 +1,6 @@
-"""Preprocess QM9 into dense adjacency tensors with explicit hydrogens.
+"""Preprocess QM9 into dense adjacency tensors using a chemistry preset.
 
-For each molecule, produce fixed-size arrays (max_nodes=29):
+For each molecule, produce fixed-size arrays (max_nodes from chemistry preset):
 - Categorical atoms (integer ids).
 - Edges: bond-type ids (0 = no bond).
 - Masks: node_mask, pair_mask (1 when both nodes exist).
@@ -24,6 +24,8 @@ from typing import Dict, List
 import numpy as np
 from rdkit import Chem
 
+from mgd.dataset.chemistry import CHEMISTRIES, get_chemistry
+from mgd.dataset.qm9 import QM9_IMPLICIT_H
 from mgd.dataset import encode_molecule
 
 
@@ -46,6 +48,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=Path("data/processed/qm9_dense.npz"), help="Output .npz file path.")
     parser.add_argument("--dtype", type=str, default="float32", help="Floating dtype for output arrays.")
     parser.add_argument(
+        "--chemistry",
+        type=str,
+        default=QM9_IMPLICIT_H.name,
+        choices=sorted(CHEMISTRIES.keys()),
+        help="Chemistry preset controlling atom vocabulary and hydrogen handling.",
+    )
+    parser.add_argument(
         "--kekulize",
         dest="kekulize",
         action=argparse.BooleanOptionalAction,
@@ -58,9 +67,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     dtype = np.dtype(args.dtype)
+    chemistry = get_chemistry(args.chemistry)
 
     mols = load_qm9_sdf(args.input)
     print(f"Loaded {len(mols)} molecules from {args.input}")
+    print(f"Using chemistry preset: {chemistry.name}")
 
     atom_id_list: List[np.ndarray] = []
     bond_type_list: List[np.ndarray] = []
@@ -79,6 +90,7 @@ def main() -> None:
             features = encode_molecule(
                 mol,
                 dtype=dtype,
+                spec=chemistry,
             )
         except ValueError as exc:
             print(f"Skipping molecule {idx} ({exc})")
