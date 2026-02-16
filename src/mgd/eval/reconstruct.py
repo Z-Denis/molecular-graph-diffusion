@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import jax
@@ -10,36 +10,19 @@ import jax.numpy as jnp
 from rdkit import Chem
 from rdkit.Chem import rdchem, rdmolops
 
-from mgd.dataset.qm9 import ATOM_TYPES, BOND_ORDERS, VALENCE_TABLE
-
-
-def _default_allowed_sets_by_symbol() -> Dict[str, Tuple[int, ...]]:
-    return {
-        "H": (1,),
-        "F": (1,),
-        "O": (1, 2),
-        "N": (3, 4),
-        "C": (4,),
-    }
+from mgd.dataset.chemistry import ChemistrySpec, DEFAULT_CHEMISTRY
 
 
 def build_allowed_valences_by_index(
-    atom_types: Iterable[str] = ATOM_TYPES,
-    fallback: np.ndarray = VALENCE_TABLE,
+    spec: ChemistrySpec = DEFAULT_CHEMISTRY,
 ) -> list[Tuple[int, ...]]:
-    allowed_sym = _default_allowed_sets_by_symbol()
-    allowed: list[Tuple[int, ...]] = []
-    for i, sym in enumerate(atom_types):
-        if sym in allowed_sym:
-            allowed.append(tuple(allowed_sym[sym]))
-        else:
-            v = int(fallback[i]) if i < len(fallback) else 0
-            allowed.append((v,))
+    allowed: list[Tuple[int, ...]] = [(0,)]
+    allowed.extend(tuple(vals) for vals in spec.allowed_valences)
     return allowed
 
 
-ALLOWED_BY_INDEX = build_allowed_valences_by_index()
-K_CAPS_BY_INDEX = {1: 1, 2: 4, 3: 3, 4: 2, 5: 1}
+ALLOWED_BY_INDEX = build_allowed_valences_by_index(DEFAULT_CHEMISTRY)
+K_CAPS_BY_INDEX = dict(DEFAULT_CHEMISTRY.k_caps_by_index)
 
 
 def decode_greedy_valence_single(
@@ -48,8 +31,9 @@ def decode_greedy_valence_single(
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
     *,
-    bond_orders: np.ndarray = BOND_ORDERS,
-    k_caps_by_index: Dict[int, int] | np.ndarray | None = K_CAPS_BY_INDEX,  # TODO: find better name
+    bond_orders: np.ndarray = DEFAULT_CHEMISTRY.bond_orders,
+    k_caps_by_index: Dict[int, int] | np.ndarray | None = None,  # TODO: find better name
+    allowed_by_index: list[Tuple[int, ...]] | None = None,
     topk_margin: int = 1,                 # TODO: find better name
     stage1_top_m: int | None = None,      # TODO: find better name
     cleanup: bool = True,
@@ -105,6 +89,11 @@ def decode_greedy_valence_single(
     # This yields an undirected mask keep_undir used to filter candidate edges. It reduces 
     # the candidate list to the most plausible neighbours and improves the stability and 
     # efficiency of the greedy decoding.
+    if k_caps_by_index is None:
+        k_caps_by_index = K_CAPS_BY_INDEX
+    if allowed_by_index is None:
+        allowed_by_index = ALLOWED_BY_INDEX
+
     keep_undir = np.ones_like(pair_mask, dtype=bool)
     if k_caps_by_index is not None:
         keep_dir = np.zeros_like(pair_mask, dtype=bool)
@@ -137,8 +126,8 @@ def decode_greedy_valence_single(
 
     # valence caps
     def _allowed_for(a: int) -> Tuple[int, ...]:
-        if 0 <= a < len(ALLOWED_BY_INDEX):
-            return ALLOWED_BY_INDEX[a]
+        if 0 <= a < len(allowed_by_index):
+            return allowed_by_index[a]
         return (0,)
 
     # initialise per-atom valence budget
@@ -217,9 +206,14 @@ def decode_greedy_valence_batch(
     atom_pred: jnp.ndarray,
     node_mask: jnp.ndarray,
     pair_mask: jnp.ndarray,
+    *,
+    spec: ChemistrySpec = DEFAULT_CHEMISTRY,
     **kwargs,
 ) -> jnp.ndarray:
     """Batch wrapper for decode_greedy_valence_single."""
+    kwargs.setdefault("bond_orders", spec.bond_orders)
+    kwargs.setdefault("k_caps_by_index", dict(spec.k_caps_by_index))
+    kwargs.setdefault("allowed_by_index", build_allowed_valences_by_index(spec))
     bsz = edge_logits.shape[0]
     out = []
     for b in range(bsz):
@@ -235,7 +229,6 @@ def decode_greedy_valence_batch(
     return jnp.asarray(np.stack(out, axis=0))
 
 
-ATOM_TYPES_PAD = ["X"] + list(ATOM_TYPES)  # indices 0..5
 BOND_TYPE_MAP = {
     1: rdchem.BondType.SINGLE,
     2: rdchem.BondType.DOUBLE,
@@ -248,6 +241,7 @@ def mol_from_predictions(
     bond_pred: np.ndarray,
     node_mask: np.ndarray | None = None,
     *,
+    spec: ChemistrySpec = DEFAULT_CHEMISTRY,
     keep_largest_component: bool = True,
 ) -> Chem.Mol:
     """Build an RDKit molecule from predicted atom/bond classes."""
@@ -263,7 +257,9 @@ def mol_from_predictions(
     for i, a in enumerate(atom_pred):
         if not node_mask[i] or a == 0:
             continue
-        sym = ATOM_TYPES_PAD[a]
+        if a > len(spec.atom_types):
+            continue
+        sym = spec.atom_types[a - 1]
         atom = Chem.Atom(sym)
         idx_map[i] = mol.AddAtom(atom)
 
@@ -304,6 +300,7 @@ def build_molecule_and_check(
     bond_pred: np.ndarray,
     node_mask: np.ndarray | None = None,
     *,
+    spec: ChemistrySpec = DEFAULT_CHEMISTRY,
     keep_largest_component: bool = True,
 ) -> Tuple[bool, Chem.Mol | Exception]:
     """Build a molecule and sanitize it, returning (is_valid, mol_or_error)."""
@@ -311,6 +308,7 @@ def build_molecule_and_check(
         atom_pred,
         bond_pred,
         node_mask,
+        spec=spec,
         keep_largest_component=keep_largest_component,
     )
     try:
