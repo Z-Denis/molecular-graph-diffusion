@@ -5,9 +5,44 @@ from __future__ import annotations
 import numpy as np
 from rdkit import Chem
 
-MAX_NODES = 29
+from .chemistry import ChemistrySpec
 
-ATOM_TYPES = ["H", "C", "N", "O", "F"]
+QM9_IMPLICIT_H = ChemistrySpec(
+    name="qm9_implicit_h",
+    max_nodes=9,
+    atom_types=("C", "N", "O", "F"),
+    bond_to_id={
+        "no_bond": 0,
+        Chem.BondType.SINGLE: 1,
+        Chem.BondType.DOUBLE: 2,
+        Chem.BondType.TRIPLE: 3,
+    },
+    bond_orders=np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+    valence_table=np.array([0.0, 4.0, 3.0, 2.0, 1.0], dtype=np.float32),  # pad, C, N, O, F
+    allowed_valences=((4,), (3, 4), (1, 2), (1,)),  # C, N, O, F
+    k_caps_by_index={1: 4, 2: 3, 3: 2, 4: 1},
+    explicit_h=False,
+)
+
+QM9_EXPLICIT_H = ChemistrySpec(
+    name="qm9_explicit_h",
+    max_nodes=29,
+    atom_types=("H", "C", "N", "O", "F"),
+    bond_to_id={
+        "no_bond": 0,
+        Chem.BondType.SINGLE: 1,
+        Chem.BondType.DOUBLE: 2,
+        Chem.BondType.TRIPLE: 3,
+    },
+    bond_orders=np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+    valence_table=np.array([0.0, 1.0, 4.0, 3.0, 2.0, 1.0], dtype=np.float32),  # pad, H, C, N, O, F
+    allowed_valences=((1,), (4,), (3, 4), (1, 2), (1,)),  # H, C, N, O, F
+    k_caps_by_index={1: 1, 2: 4, 3: 3, 4: 2, 5: 1},
+    explicit_h=True,
+)
+
+MAX_NODES = QM9_IMPLICIT_H.max_nodes
+ATOM_TYPES = list(QM9_IMPLICIT_H.atom_types)
 HYBRIDIZATIONS = [
     Chem.HybridizationType.SP,
     Chem.HybridizationType.SP2,
@@ -24,29 +59,24 @@ ELECTRONEGATIVITY = {
 }
 
 # Reserve 0 for padding/unknown; categories start at 1
-ATOM_TO_ID = {sym: i + 1 for i, sym in enumerate(ATOM_TYPES)}
+ATOM_TO_ID = QM9_IMPLICIT_H.atom_to_id
 HYBRID_TO_ID = {hyb: i + 1 for i, hyb in enumerate(HYBRIDIZATIONS)}
 
-BOND_TO_ID = {
-    "no_bond": 0,
-    Chem.BondType.SINGLE: 1,
-    Chem.BondType.DOUBLE: 2,
-    Chem.BondType.TRIPLE: 3,
-}
+BOND_TO_ID = dict(QM9_IMPLICIT_H.bond_to_id)
 
 # Valence lookup aligned with ATOM_TO_ID (index 0 is pad/unknown).
-VALENCE_TABLE = np.array([0, 1, 4, 3, 2, 1], dtype=np.float32)  # pad, H, C, N, O, F
+VALENCE_TABLE = np.asarray(QM9_IMPLICIT_H.valence_table, dtype=np.float32)
 
-BOND_ORDERS = np.array(
-    [0.0, 1.0, 2.0, 3.0], dtype=np.float32
-)  # pad/no-bond, single, double, triple (kekulized)
+BOND_ORDERS = np.asarray(QM9_IMPLICIT_H.bond_orders, dtype=np.float32)
 
-ATOM_VOCAB_SIZE = len(ATOM_TYPES) + 1
+ATOM_VOCAB_SIZE = QM9_IMPLICIT_H.atom_vocab_size
 HYBRID_VOCAB_SIZE = len(HYBRIDIZATIONS) + 1
-BOND_VOCAB_SIZE = max(BOND_TO_ID.values()) + 1
+BOND_VOCAB_SIZE = QM9_IMPLICIT_H.bond_vocab_size
 
 __all__ = [
     "MAX_NODES",
+    "QM9_IMPLICIT_H",
+    "QM9_EXPLICIT_H",
     "ATOM_TYPES",
     "HYBRIDIZATIONS",
     "ELECTRONEGATIVITY",
