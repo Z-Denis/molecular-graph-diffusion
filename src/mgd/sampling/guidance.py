@@ -38,8 +38,13 @@ def _expected_bond_order_sum(
 ) -> jnp.ndarray:
     p = edge_probs
     bo = jnp.asarray(bond_orders, dtype=edge_probs.dtype)
+    if bo.shape[0] == p.shape[-1] - 1:
+        bo = jnp.concatenate([jnp.zeros((1,), dtype=bo.dtype), bo], axis=0)
     if bo.shape[0] != p.shape[-1]:
-        raise ValueError("bond_orders length must match edge logits channels.")
+        raise ValueError(
+            f"bond_orders length ({bo.shape[0]}) must match edge probs channels "
+            f"({p.shape[-1]}) or be type-only ({p.shape[-1] - 1})."
+        )
     expected = (p * bo).sum(axis=-1)
     expected = expected * pair_mask
     return expected.sum(axis=-1)
@@ -59,7 +64,18 @@ def valence_over_penalty(
     bond_orders: jnp.ndarray = jnp.asarray(DEFAULT_CHEMISTRY.bond_orders),
 ) -> jnp.ndarray:
     v_hat = _expected_bond_order_sum(probs.edge, pair_mask, bond_orders)
-    vmax = (probs.node * jnp.asarray(max_valence, dtype=v_hat.dtype)).sum(axis=-1)
+    vmax_table = jnp.asarray(max_valence, dtype=v_hat.dtype)
+    if vmax_table.shape[0] == probs.node.shape[-1] - 1:
+        vmax_table = jnp.concatenate(
+            [jnp.zeros((1,), dtype=vmax_table.dtype), vmax_table],
+            axis=0,
+        )
+    if vmax_table.shape[0] != probs.node.shape[-1]:
+        raise ValueError(
+            f"max_valence length ({vmax_table.shape[0]}) must match node probs channels "
+            f"({probs.node.shape[-1]}) or be type-only ({probs.node.shape[-1] - 1})."
+        )
+    vmax = (probs.node * vmax_table).sum(axis=-1)
     over = jnp.maximum(v_hat - vmax, 0.0)
     mask = node_mask.astype(v_hat.dtype)
     return (jnp.square(over) * mask).sum() / jnp.maximum(mask.sum(), 1.0)
@@ -123,7 +139,7 @@ def make_logit_guidance(
     def probs_from_logits(logits: GraphLatent) -> GraphLatent:
         probs = GraphLatent(
             jax.nn.softmax(logits.node, axis=-1),
-            edge_probs_from_logits(logits.edge),
+            edge_probs_from_logits(logits.edge, pair_mask=pair_mask),
         )
         if config.symmetrize_probs:
             probs = GraphLatent(probs.node, symmetrize_edge_probs(probs.edge))
