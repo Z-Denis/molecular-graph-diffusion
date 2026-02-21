@@ -34,6 +34,21 @@ class GraphDiffusionModel(nn.Module):
     sigma_max: float                    # training/sampling upper sigma
     param_dtype: DTypeLike = "float32"
 
+    def setup(self) -> None:
+        embed_spec = getattr(self.embedder, "spec", None)
+        denoise_spec = getattr(self.denoiser, "spec", None)
+        if embed_spec is None or denoise_spec is None:
+            return
+        if (
+            embed_spec.atom_types != denoise_spec.atom_types
+            or embed_spec.bond_vocab_size != denoise_spec.bond_vocab_size
+            or embed_spec.max_nodes != denoise_spec.max_nodes
+        ):
+            raise ValueError(
+                "Embedder and denoiser chemistry specs are inconsistent. "
+                "Instantiate both with the same `spec`."
+            )
+
     def _input_scale(self, sigma: jnp.ndarray) -> GraphLatent:
         """Compute input scaling for noisy embeddings."""
         s2 = jnp.square(sigma)
@@ -75,9 +90,11 @@ class GraphDiffusionModel(nn.Module):
     def _probs_from_logits(
         self,
         logits: GraphLatent,
+        *,
+        pair_mask: jnp.ndarray | None = None,
     ) -> GraphLatent:
         node = jax.nn.softmax(logits.node, axis=-1)
-        edge = edge_probs_from_logits(logits.edge)
+        edge = edge_probs_from_logits(logits.edge, pair_mask=pair_mask)
         return GraphLatent(node=node, edge=edge)
 
     def _xhat_from_probs(self, probs: GraphLatent) -> GraphLatent:
@@ -110,7 +127,7 @@ class GraphDiffusionModel(nn.Module):
             node_mask=node_mask,
             pair_mask=pair_mask,
         )
-        probs = self._probs_from_logits(logits)
+        probs = self._probs_from_logits(logits, pair_mask=pair_mask)
         x_hat = self._xhat_from_probs(probs).masked(node_mask, pair_mask)
         return {"x_hat": x_hat, "logits": logits, "probs": probs}
 

@@ -23,12 +23,18 @@ class MessagePassingLayer(nn.Module):
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     param_dtype: DTypeLike = "float32"
     symmetrize: bool = True
+    use_routing_gate: bool = False
+    routing_beta_min: float = 0.0
+    routing_beta_max: float = 1.0
+    routing_beta_k: float = 3.0
+    routing_sigma_data: float = 1.0
 
     @nn.compact
     def __call__(
         self,
         nodes: jnp.ndarray,
         edges: jnp.ndarray,
+        log_sigma: jnp.ndarray | None = None,
         *,
         node_mask: jnp.ndarray,
         pair_mask: jnp.ndarray,
@@ -52,7 +58,20 @@ class MessagePassingLayer(nn.Module):
         nodes_n = nn.LayerNorm(param_dtype=self.param_dtype)(nodes)
         edges_n = nn.LayerNorm(param_dtype=self.param_dtype)(edges)
 
-        m_ij = mess_update(conc(node_j=nodes_n, edge_ij=edges_n))
+        m_ij = mess_update(conc(node_i=nodes_n, node_j=nodes_n, edge_ij=edges_n))
+        if self.use_routing_gate:
+            if log_sigma is None:
+                raise ValueError("log_sigma must be provided when use_routing_gate=True.")
+            gate_logits = mlp(features=1, name="route_gate_mlp")(
+                conc(node_i=nodes_n, node_j=nodes_n, edge_ij=edges_n)
+            )[..., 0]
+            gate_raw = jax.nn.sigmoid(gate_logits)
+            log_sigma_data = jnp.log(jnp.asarray(self.routing_sigma_data, dtype=gate_raw.dtype))
+            sharp = jax.nn.sigmoid(self.routing_beta_k * (log_sigma_data - log_sigma))
+            beta = self.routing_beta_min + (self.routing_beta_max - self.routing_beta_min) * sharp
+            gate = (1.0 - beta[..., None, None]) + beta[..., None, None] * gate_raw
+            gate = 0.5 * (gate + jnp.swapaxes(gate, -1, -2))
+            m_ij = m_ij * gate[..., None]
         m_ij = m_ij * pair_mask[..., None]
         m_i = jnp.sum(m_ij, axis=-2)
         m_i_n = nn.LayerNorm(param_dtype=self.param_dtype)(m_i)

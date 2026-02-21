@@ -1,7 +1,7 @@
 """Model package containing GNN-based denoisers and helpers."""
 
 from .diffusion_model import GraphDiffusionModel
-from .denoiser import MPNNDenoiser
+from .denoiser import MPNNDenoiser, TransformerDenoiser, GatedMPNNDenoiser
 from .embeddings import (
     CategoricalLatentEmbedder,
     TimeEmbedding,
@@ -14,6 +14,8 @@ from ..latent import GraphLatent
 __all__ = [
     "GraphDiffusionModel",
     "MPNNDenoiser",
+    "TransformerDenoiser",
+    "GatedMPNNDenoiser",
     "CategoricalLatentEmbedder",
     "TimeEmbedding",
     "NodeCountEmbedding",

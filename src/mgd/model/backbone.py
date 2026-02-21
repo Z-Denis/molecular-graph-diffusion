@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from flax import linen as nn
 
+from ..dataset.chemistry import DEFAULT_CHEMISTRY
 from .embeddings import TimeEmbedding, NodeCountEmbedding
 from .gnn_layers import MessagePassingLayer, TransformerBlock
 
@@ -19,6 +20,12 @@ class MPNNBackbone(nn.Module):
     mess_dim: int   # message hidden dim
     time_dim: int   # time hidden dim
     node_count_dim: int | None = None
+    max_nodes: int = DEFAULT_CHEMISTRY.max_nodes
+    use_routing_gate: bool = False
+    routing_beta_min: float = 0.0
+    routing_beta_max: float = 1.0
+    routing_beta_k: float = 3.0
+    routing_sigma_data: float = 1.0
 
     activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
     n_layers: int = 1
@@ -47,6 +54,7 @@ class MPNNBackbone(nn.Module):
             embed_dim=count_dim,
             node_dim=self.node_dim,
             edge_dim=self.edge_dim,
+            max_nodes=self.max_nodes,
             activation=self.activation,
             param_dtype=self.param_dtype,
             name="node_count_embedding",
@@ -58,6 +66,11 @@ class MPNNBackbone(nn.Module):
             self.mess_dim,
             activation=self.activation,
             param_dtype=self.param_dtype,
+            use_routing_gate=self.use_routing_gate,
+            routing_beta_min=self.routing_beta_min,
+            routing_beta_max=self.routing_beta_max,
+            routing_beta_k=self.routing_beta_k,
+            routing_sigma_data=self.routing_sigma_data,
         )
         
         t_nodes, t_edges = time_emb(times)
@@ -70,7 +83,9 @@ class MPNNBackbone(nn.Module):
 
         for i in range(self.n_layers):
             nodes, edges = mpnn(name=f"mpnn_{i}")(
-                nodes, edges,
+                nodes,
+                edges,
+                times,
                 node_mask=node_mask,
                 pair_mask=pair_mask,
             )
@@ -84,6 +99,7 @@ class TransformerBackbone(nn.Module):
 
     time_dim: int   # time hidden dim
     node_count_dim: int | None = None
+    max_nodes: int = DEFAULT_CHEMISTRY.max_nodes
 
     n_layers: int = 1
     n_heads: int = 8
@@ -119,6 +135,7 @@ class TransformerBackbone(nn.Module):
             embed_dim=count_dim,
             node_dim=self.node_dim,
             edge_dim=self.edge_dim,
+            max_nodes=self.max_nodes,
             activation=self.activation,
             param_dtype=self.param_dtype,
             name="node_count_embedding",
