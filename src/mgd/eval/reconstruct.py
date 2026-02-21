@@ -42,8 +42,12 @@ def decode_greedy_valence_single(
 ) -> np.ndarray:
     """Greedy valence-constrained decoding for a single graph."""
     c = edge_logits.shape[-1]
-    if c != 4:
-        raise ValueError("Expected 4 bond classes (0..3).")
+    if c < 2:
+        raise ValueError("Expected at least 2 edge classes: no-bond + one bond type.")
+    if int(np.asarray(bond_orders).shape[0]) != c:
+        raise ValueError(
+            f"bond_orders length ({int(np.asarray(bond_orders).shape[0])}) must match edge classes ({c})."
+        )
 
     # existence logit + conditional type softmax
     p = edge_probs_from_logits(edge_logits)
@@ -68,7 +72,7 @@ def decode_greedy_valence_single(
     p_type = p_pos / (p_pos_sum + eps)
 
     # type + score
-    k_star = jnp.argmax(p_pos, axis=-1) + 1  # 1..3
+    k_star = jnp.argmax(p_pos, axis=-1) + 1  # 1..(c-1)
     score = p_exist * jnp.max(p_type, axis=-1)
 
     # to numpy for greedy
@@ -229,11 +233,14 @@ def decode_greedy_valence_batch(
     return jnp.asarray(np.stack(out, axis=0))
 
 
-BOND_TYPE_MAP = {
-    1: rdchem.BondType.SINGLE,
-    2: rdchem.BondType.DOUBLE,
-    3: rdchem.BondType.TRIPLE,
-}
+def _bond_type_map_from_spec(spec: ChemistrySpec) -> dict[int, rdchem.BondType]:
+    out: dict[int, rdchem.BondType] = {}
+    for key, idx in spec.bond_to_id.items():
+        if key == "no_bond":
+            continue
+        if isinstance(key, rdchem.BondType):
+            out[int(idx)] = key
+    return out
 
 
 def mol_from_predictions(
@@ -253,6 +260,7 @@ def mol_from_predictions(
         node_mask = list(map(bool, node_mask))
 
     mol = Chem.RWMol()
+    bond_type_map = _bond_type_map_from_spec(spec)
     idx_map: Dict[int, int] = {}
     for i, a in enumerate(atom_pred):
         if not node_mask[i] or a == 0:
@@ -272,7 +280,7 @@ def mol_from_predictions(
             b = int(bond_pred[i, j])
             if b == 0:
                 continue
-            bt = BOND_TYPE_MAP.get(b)
+            bt = bond_type_map.get(b)
             if bt is None:
                 continue
             mol.AddBond(idx_map[i], idx_map[j], bt)

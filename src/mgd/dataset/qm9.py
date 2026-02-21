@@ -19,7 +19,7 @@ QM9_IMPLICIT_H = ChemistrySpec(
     },
     bond_orders=np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
     valence_table=np.array([0.0, 4.0, 3.0, 2.0, 1.0], dtype=np.float32),  # pad, C, N, O, F
-    allowed_valences=((4,), (3, 4), (1, 2), (1,)),  # C, N, O, F
+    allowed_valences=((4,), (3,), (1, 2), (1,)),  # C, N, O, F
     k_caps_by_index={1: 4, 2: 3, 3: 2, 4: 1},
     explicit_h=False,
 )
@@ -36,7 +36,7 @@ QM9_EXPLICIT_H = ChemistrySpec(
     },
     bond_orders=np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
     valence_table=np.array([0.0, 1.0, 4.0, 3.0, 2.0, 1.0], dtype=np.float32),  # pad, H, C, N, O, F
-    allowed_valences=((1,), (4,), (3, 4), (1, 2), (1,)),  # H, C, N, O, F
+    allowed_valences=((1,), (4,), (3,), (1, 2), (1,)),  # H, C, N, O, F
     k_caps_by_index={1: 1, 2: 4, 3: 3, 4: 2, 5: 1},
     explicit_h=True,
 )
