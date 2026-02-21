@@ -32,14 +32,28 @@ def latent_from_probs(
     return GraphLatent(node=node, edge=edge)
 
 
-def edge_probs_from_logits(edge_logits: jnp.ndarray) -> jnp.ndarray:
-    """Convert edge logits to categorical probabilities with factorized existence."""
+def edge_probs_from_logits(
+    edge_logits: jnp.ndarray,
+    pair_mask: jnp.ndarray | None = None,
+) -> jnp.ndarray:
+    """Convert edge logits to categorical probabilities with factorized existence.
+
+    If ``pair_mask`` is provided, masked entries are forced to the no-bond
+    Kronecker distribution (class 0).
+    """
     edge_exist = jax.nn.sigmoid(edge_logits[..., 0])
     edge_type = jax.nn.softmax(edge_logits[..., 1:], axis=-1)
-    return jnp.concatenate(
+    probs = jnp.concatenate(
         [1.0 - edge_exist[..., None], edge_exist[..., None] * edge_type],
         axis=-1,
     )
+    if pair_mask is None:
+        return probs
+
+    mask = pair_mask.astype(probs.dtype)
+    probs = probs * mask[..., None]
+    probs = probs.at[..., 0].add(1.0 - mask)
+    return probs
 
 
 def center_logits(logits: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
